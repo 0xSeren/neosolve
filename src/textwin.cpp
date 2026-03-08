@@ -24,7 +24,7 @@ public:
     void Draw(UiCanvas *uiCanvas, int x, int y, bool asHovered) override {
         // Draw a darker-grey spacer in between the groups of icons.
         uiCanvas->DrawRect(x, x + 4, y, y - 24,
-                           /*fillColor=*/{ 45, 45, 45, 255 },
+                           /*fillColor=*/SS.modelColor[2],
                            /*outlineColor=*/{});
     }
 
@@ -195,7 +195,7 @@ static Button *buttons[] = {
     &occludedLinesButton,
 };
 
-/** Foreground color codes. */
+/** Default foreground color codes (used if settings not loaded yet). */
 const TextWindow::Color TextWindow::fgColors[] = {
     { 'd', RGBi(255, 255, 255) },  // Default   : white
     { 'l', RGBi(100, 200, 255) },  // links     : blue
@@ -210,7 +210,7 @@ const TextWindow::Color TextWindow::fgColors[] = {
     { 'b', RGBi(200, 200, 200) },
     { 0,   RGBi(  0,   0,   0) }
 };
-/** Background color codes. */
+/** Default background color codes (used if settings not loaded yet). */
 const TextWindow::Color TextWindow::bgColors[] = {
     { 'd', RGBi(  0,   0,   0) },  // Default   : black
     { 't', RGBi( 34,  15,  15) },
@@ -218,6 +218,33 @@ const TextWindow::Color TextWindow::bgColors[] = {
     { 'r', RGBi(255, 255, 255) },  // Reverse   : white
     { 0,   RGBi(  0,   0,   0) }
 };
+
+void TextWindow::MakeColorTableFromSettings(float *fgTable, float *bgTable) {
+    TextWindow::Color fgFromSettings[] = {
+        { 'd', RGBi(255, 255, 255) },
+        { 'l', SS.modelColor[6] },
+        { 't', RGBi(255, 200, 100) },
+        { 'h', SS.modelColor[1] },
+        { 's', SS.modelColor[4] },
+        { 'm', RGBi(200, 200, 0) },
+        { 'r', RGBi(0, 0, 0) },
+        { 'x', SS.modelColor[3] },
+        { 'i', SS.modelColor[5] },
+        { 'g', SS.modelColor[1] },
+        { 'b', SS.modelColor[0] },
+        { 0,   RGBi(0, 0, 0) }
+    };
+    MakeColorTable(fgFromSettings, fgTable);
+
+    TextWindow::Color bgFromSettings[] = {
+        { 'd', SS.modelColor[2] },
+        { 't', SS.modelColor[2] },
+        { 'a', SS.modelColor[2] },
+        { 'r', RGBi(255, 255, 255) },
+        { 0,   RGBi(0, 0, 0) }
+    };
+    MakeColorTable(bgFromSettings, bgTable);
+}
 
 void TextWindow::MakeColorTable(const Color *in, float *out) {
     int i;
@@ -298,9 +325,7 @@ void TextWindow::ClearSuper() {
     canvas = std::move(oldCanvas);
 
     HideEditControl();
-
-    MakeColorTable(fgColors, fgColorTable);
-    MakeColorTable(bgColors, bgColorTable);
+    MakeColorTableFromSettings(fgColorTable, bgColorTable);
 
     ClearScreen();
     Show();
@@ -575,6 +600,7 @@ void TextWindow::Show() {
             case Screen::PASTE_TRANSFORMED:  ShowPasteTransformed(); break;
             case Screen::EDIT_VIEW:          ShowEditView();         break;
             case Screen::TANGENT_ARC:        ShowTangentArc();       break;
+            case Screen::CHAMFER:            ShowChamfer();          break;
         }
     }
     Printf(false, "");
@@ -621,7 +647,7 @@ void TextWindow::DrawOrHitTestIcons(UiCanvas *uiCanvas, TextWindow::DrawOrHitHow
     if(how == PAINT) {
         int top = y - 28, bot = y + 4;
         uiCanvas->DrawRect(0, (int)width, top, bot,
-                           /*fillColor=*/{ 30, 30, 30, 255 }, /*outlineColor=*/{});
+                           /*fillColor=*/SS.modelColor[2], /*outlineColor=*/{});
     }
 
     Button *oldHovered = hoveredButton;
@@ -951,7 +977,7 @@ void TextWindow::Paint() {
     camera.offset.y   = -camera.height / 2.0;
 
     Lighting lighting = {};
-    lighting.backgroundColor = RGBi(0, 0, 0);
+    lighting.backgroundColor = SS.modelColor[2];
 
     canvas->SetLighting(lighting);
     canvas->SetCamera(camera);

@@ -130,7 +130,7 @@ void Style::LoadFactoryDefaults() {
         Style *s = Get(d->h);
         FillDefaultStyle(s, d, /*factory=*/true);
     }
-    SS.backgroundColor = RGBi(0, 0, 0);
+    SS.backgroundColor = RGBi(41, 41, 41);
 }
 
 void Style::FreezeDefaultStyles(Platform::SettingsRef settings) {
