@@ -11,6 +11,7 @@
 #include <glibmm/convert.h>
 #include <glibmm/main.h>
 #include <gtkmm/box.h>
+#include <gtkmm/button.h>
 #include <gtkmm/checkmenuitem.h>
 #include <gtkmm/cssprovider.h>
 #include <gtkmm/entry.h>
@@ -21,6 +22,7 @@
 #include <gtkmm/menu.h>
 #include <gtkmm/menubar.h>
 #include <gtkmm/messagedialog.h>
+#include <gtkmm/paned.h>
 #include <gtkmm/settings.h>
 #include <gtkmm/scrollbar.h>
 #include <gtkmm/separatormenuitem.h>
@@ -703,6 +705,18 @@ protected:
                   keyval <= GDK_KEY_F12) {
             event.key = KeyboardEvent::Key::FUNCTION;
             event.num = keyval - GDK_KEY_F1 + 1;
+        } else if(keyval == GDK_KEY_Page_Up) {
+            event.key = KeyboardEvent::Key::PAGE_UP;
+        } else if(keyval == GDK_KEY_Page_Down) {
+            event.key = KeyboardEvent::Key::PAGE_DOWN;
+        } else if(keyval == GDK_KEY_Up) {
+            event.key = KeyboardEvent::Key::ARROW_UP;
+        } else if(keyval == GDK_KEY_Down) {
+            event.key = KeyboardEvent::Key::ARROW_DOWN;
+        } else if(keyval == GDK_KEY_Left) {
+            event.key = KeyboardEvent::Key::ARROW_LEFT;
+        } else if(keyval == GDK_KEY_Right) {
+            event.key = KeyboardEvent::Key::ARROW_RIGHT;
         } else {
             return false;
         }
@@ -854,22 +868,41 @@ class GtkWindow : public Gtk::Window {
     Platform::Window   *_receiver;
     Gtk::VBox           _vbox;
     Gtk::MenuBar       *_menu_bar = NULL;
-    Gtk::HBox           _hbox;
+    Gtk::HBox           _header;
+    Gtk::Button         _dock_button;
     GtkEditorOverlay    _editor_overlay;
+    Gtk::Paned          _paned;
+    Gtk::HBox           _hbox;
     Gtk::VScrollbar     _scrollbar;
+    Gtk::Widget        *_docked_widget = NULL;
+    int                 _docked_width = 420;
+    bool                _use_paned = false;
+    bool                _paned_position_set = false;
+    bool                _show_dock_button = false;
     bool                _is_under_cursor = false;
     bool                _is_fullscreen = false;
     std::string         _tooltip_text;
     Gdk::Rectangle      _tooltip_area;
 
 public:
-    GtkWindow(Platform::Window *receiver) : _receiver(receiver), _editor_overlay(receiver) {
+    GtkWindow(Platform::Window *receiver, bool usePaned = false)
+        : _receiver(receiver), _editor_overlay(receiver), _paned(Gtk::ORIENTATION_HORIZONTAL),
+          _use_paned(usePaned) {
         _hbox.pack_start(_editor_overlay, /*expand=*/true, /*fill=*/true);
         _hbox.pack_end(_scrollbar, /*expand=*/false, /*fill=*/false);
-        _vbox.pack_end(_hbox, /*expand=*/true, /*fill=*/true);
+
+        if(_use_paned) {
+            _paned.pack1(_hbox, /*resize=*/true, /*shrink=*/true);
+            _vbox.pack_end(_paned, /*expand=*/true, /*fill=*/true);
+        } else {
+            _vbox.pack_end(_hbox, /*expand=*/true, /*fill=*/true);
+        }
         add(_vbox);
 
         _vbox.show();
+        if(_use_paned) {
+            _paned.show();
+        }
         _hbox.show();
         _editor_overlay.show();
         get_gl_widget().show();
@@ -880,6 +913,79 @@ public:
         get_gl_widget().set_has_tooltip(true);
         get_gl_widget().signal_query_tooltip().
             connect(sigc::mem_fun(this, &GtkWindow::on_query_tooltip));
+
+        if(_use_paned) {
+            _paned.signal_size_allocate().connect(
+                sigc::mem_fun(this, &GtkWindow::on_paned_size_allocate));
+        }
+    }
+
+    void enable_dock_button() {
+        _show_dock_button = true;
+        _dock_button.set_label("⏏");
+        _dock_button.set_tooltip_text("Dock Property Browser");
+        _dock_button.signal_clicked().connect(
+            sigc::mem_fun(this, &GtkWindow::on_dock_clicked));
+        _header.pack_end(_dock_button, /*expand=*/false, /*fill=*/false);
+        _vbox.pack_start(_header, /*expand=*/false, /*fill=*/false);
+        _vbox.reorder_child(_header, 0);
+        _header.show_all();
+    }
+
+protected:
+    void on_dock_clicked() {
+        SS.textWindowDocked = true;
+        SS.TW.window.reset();
+        SS.TW.canvas.reset();
+        SS.TW.Init();
+        SS.GW.EnsureValidActives();
+    }
+
+public:
+
+    void on_paned_size_allocate(Gtk::Allocation &allocation) {
+        if(_docked_widget && !_paned_position_set) {
+            int paned_width = allocation.get_width();
+            if(paned_width > _docked_width + 100) {
+                _paned.set_position(paned_width - _docked_width);
+                _paned_position_set = true;
+            }
+        }
+    }
+
+    void dock_widget(Gtk::Widget *widget, int width) {
+        if(!_use_paned || _docked_widget) return;
+        _docked_widget = widget;
+        _docked_width = width;
+        _paned_position_set = false;
+        widget->set_size_request(width, -1);
+        _paned.pack2(*widget, /*resize=*/false, /*shrink=*/false);
+        widget->show();
+        update_paned_position(width);
+    }
+
+    void update_paned_position(int docked_width) {
+        if(!_use_paned || !_docked_widget) return;
+        _docked_width = docked_width;
+        _paned_position_set = false;
+        int paned_width = _paned.get_allocated_width();
+        if(paned_width > docked_width) {
+            _paned.set_position(paned_width - docked_width);
+        }
+    }
+
+    void undock_widget() {
+        if(!_use_paned || !_docked_widget) return;
+        _paned.remove(*_docked_widget);
+        _docked_widget = NULL;
+    }
+
+    Gtk::Widget *get_docked_widget() {
+        return _docked_widget;
+    }
+
+    bool has_paned() const {
+        return _use_paned;
     }
 
     bool is_full_screen() const {
@@ -970,6 +1076,58 @@ protected:
     }
 };
 
+class GtkDockedContent : public Gtk::VBox {
+    Platform::Window   *_receiver;
+    Gtk::HBox           _header;
+    Gtk::Button         _undock_button;
+    Gtk::HBox           _content;
+    GtkEditorOverlay    _editor_overlay;
+    Gtk::VScrollbar     _scrollbar;
+
+public:
+    GtkDockedContent(Platform::Window *receiver) : _receiver(receiver), _editor_overlay(receiver) {
+        set_size_request(420, -1);
+
+        _undock_button.set_label("⏏");
+        _undock_button.set_tooltip_text("Undock Property Browser");
+        _undock_button.signal_clicked().connect(
+            sigc::mem_fun(this, &GtkDockedContent::on_undock_clicked));
+        _header.pack_end(_undock_button, /*expand=*/false, /*fill=*/false);
+        _header.show_all();
+
+        _content.pack_start(_editor_overlay, /*expand=*/true, /*fill=*/true);
+        _content.pack_end(_scrollbar, /*expand=*/false, /*fill=*/false);
+        _editor_overlay.show();
+        _editor_overlay.get_gl_widget().show();
+        _content.show();
+
+        pack_start(_header, /*expand=*/false, /*fill=*/false);
+        pack_start(_content, /*expand=*/true, /*fill=*/true);
+
+        _scrollbar.get_adjustment()->signal_value_changed().
+            connect(sigc::mem_fun(this, &GtkDockedContent::on_scrollbar_value_changed));
+    }
+
+    GtkEditorOverlay &get_editor_overlay() { return _editor_overlay; }
+    GtkGLWidget &get_gl_widget() { return _editor_overlay.get_gl_widget(); }
+    Gtk::VScrollbar &get_scrollbar() { return _scrollbar; }
+
+protected:
+    void on_scrollbar_value_changed() {
+        if(_receiver->onScrollbarAdjusted) {
+            _receiver->onScrollbarAdjusted(_scrollbar.get_adjustment()->get_value());
+        }
+    }
+
+    void on_undock_clicked() {
+        SS.textWindowDocked = false;
+        SS.TW.window.reset();
+        SS.TW.canvas.reset();
+        SS.TW.Init();
+        SS.GW.EnsureValidActives();
+    }
+};
+
 //-----------------------------------------------------------------------------
 // Windows
 //-----------------------------------------------------------------------------
@@ -979,7 +1137,7 @@ public:
     GtkWindow       gtkWindow;
     MenuBarRef      menuBar;
 
-    WindowImplGtk(Window::Kind kind) : gtkWindow(this) {
+    WindowImplGtk(Window::Kind kind, bool usePaned = false) : gtkWindow(this, usePaned) {
         switch(kind) {
             case Kind::TOPLEVEL:
                 break;
@@ -988,6 +1146,7 @@ public:
                 gtkWindow.set_type_hint(Gdk::WINDOW_TYPE_HINT_UTILITY);
                 gtkWindow.set_skip_taskbar_hint(true);
                 gtkWindow.set_skip_pager_hint(true);
+                gtkWindow.enable_dock_button();
                 break;
         }
 
@@ -1151,7 +1310,140 @@ public:
     }
 };
 
+class WindowImplGtkDocked final : public Window {
+public:
+    GtkDockedContent              content;
+    std::shared_ptr<WindowImplGtk> parentWindow;
+    int                           dockedWidth = 420;
+
+    WindowImplGtkDocked(std::shared_ptr<WindowImplGtk> parent)
+        : content(this), parentWindow(parent) {
+        parentWindow->gtkWindow.dock_widget(&content, dockedWidth);
+        content.show();
+    }
+
+    ~WindowImplGtkDocked() {
+        parentWindow->gtkWindow.undock_widget();
+    }
+
+    double GetPixelDensity() override {
+        return parentWindow->GetPixelDensity();
+    }
+
+    double GetDevicePixelRatio() override {
+        return parentWindow->GetDevicePixelRatio();
+    }
+
+    bool IsVisible() override {
+        return content.is_visible();
+    }
+
+    void SetVisible(bool visible) override {
+        if(visible) {
+            content.show();
+        } else {
+            content.hide();
+        }
+    }
+
+    void Focus() override {
+        content.grab_focus();
+    }
+
+    bool IsFullScreen() override { return false; }
+    void SetFullScreen(bool) override {}
+    void SetTitle(const std::string &) override {}
+    void SetMenuBar(MenuBarRef) override {}
+
+    void GetContentSize(double *width, double *height) override {
+        *width  = content.get_gl_widget().get_allocated_width();
+        *height = content.get_gl_widget().get_allocated_height();
+    }
+
+    void SetMinContentSize(double width, double height) override {
+        content.get_gl_widget().set_size_request((int)width, (int)height);
+    }
+
+    void FreezePosition(SettingsRef settings, const std::string &key) override {
+        dockedWidth = content.get_allocated_width();
+        if(dockedWidth > 0) {
+            settings->FreezeInt(key + "_Width", dockedWidth);
+        }
+    }
+
+    void ThawPosition(SettingsRef settings, const std::string &key) override {
+        dockedWidth = settings->ThawInt(key + "_Width", 350);
+        content.set_size_request(dockedWidth, -1);
+        parentWindow->gtkWindow.update_paned_position(dockedWidth);
+    }
+
+    void SetCursor(Cursor cursor) override {
+        std::string cursor_name;
+        switch(cursor) {
+            case Cursor::POINTER: cursor_name = "default"; break;
+            case Cursor::HAND:    cursor_name = "pointer"; break;
+            default: ssassert(false, "Unexpected cursor");
+        }
+        auto gdkWindow = content.get_gl_widget().get_window();
+        if(gdkWindow) {
+            gdkWindow->set_cursor(Gdk::Cursor::create(gdkWindow->get_display(), cursor_name.c_str()));
+        }
+    }
+
+    void SetTooltip(const std::string &, double, double, double, double) override {}
+
+    bool IsEditorVisible() override {
+        return content.get_editor_overlay().is_editing();
+    }
+
+    void ShowEditor(double x, double y, double fontHeight, double minWidth,
+                    bool isMonospace, const std::string &text) override {
+        content.get_editor_overlay().start_editing(
+            (int)x, (int)y, (int)fontHeight, (int)minWidth, isMonospace, text);
+    }
+
+    void HideEditor() override {
+        content.get_editor_overlay().stop_editing();
+    }
+
+    void SetScrollbarVisible(bool visible) override {
+        if(visible) {
+            content.get_scrollbar().show();
+        } else {
+            content.get_scrollbar().hide();
+        }
+    }
+
+    void ConfigureScrollbar(double min, double max, double pageSize) override {
+        auto adjustment = content.get_scrollbar().get_adjustment();
+        adjustment->configure(adjustment->get_value(), min, max, 1, 4, pageSize);
+    }
+
+    double GetScrollbarPosition() override {
+        return content.get_scrollbar().get_adjustment()->get_value();
+    }
+
+    void SetScrollbarPosition(double pos) override {
+        content.get_scrollbar().get_adjustment()->set_value(pos);
+    }
+
+    void Invalidate() override {
+        content.get_gl_widget().queue_render();
+    }
+};
+
 WindowRef CreateWindow(Window::Kind kind, WindowRef parentWindow) {
+    if(kind == Window::Kind::TOPLEVEL) {
+        return std::make_shared<WindowImplGtk>(kind, /*usePaned=*/true);
+    }
+
+    if(kind == Window::Kind::TOOL && parentWindow && SS.textWindowDocked) {
+        auto parent = std::static_pointer_cast<WindowImplGtk>(parentWindow);
+        if(parent->gtkWindow.has_paned()) {
+            return std::make_shared<WindowImplGtkDocked>(parent);
+        }
+    }
+
     auto window = std::make_shared<WindowImplGtk>(kind);
     if(parentWindow) {
         window->gtkWindow.set_transient_for(
