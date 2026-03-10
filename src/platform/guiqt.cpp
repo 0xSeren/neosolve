@@ -23,6 +23,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QRegularExpression>
 #include <QScreen>
 #include <QSettings>
 #include <QTimer>
@@ -218,7 +219,28 @@ public:
 
     bool RunModal() override {
         updateFilters();
-        return fileDialogQ.exec();
+        bool result = fileDialogQ.exec();
+
+        // For save dialogs, ensure the file has the correct extension
+        if(result && fileDialogQ.acceptMode() == QFileDialog::AcceptSave) {
+            QStringList files = fileDialogQ.selectedFiles();
+            if(!files.isEmpty()) {
+                QString filename = files[0];
+                QString filter = fileDialogQ.selectedNameFilter();
+
+                // Extract first extension from filter (e.g., "SolveSpace models (*.slvs)" -> "slvs")
+                QRegularExpression re("\\*\\.([a-zA-Z0-9]+)");
+                QRegularExpressionMatch match = re.match(filter);
+                if(match.hasMatch()) {
+                    QString ext = match.captured(1);
+                    if(!filename.endsWith("." + ext, Qt::CaseInsensitive)) {
+                        // Append the extension
+                        fileDialogQ.selectFile(filename + "." + ext);
+                    }
+                }
+            }
+        }
+        return result;
     }
 };
 
@@ -686,8 +708,19 @@ void SSView::updateSlvSpaceKeyEvent(QKeyEvent* event)
     if (event->key() >= Qt::Key_F1 && event->key() <= Qt::Key_F35) {
         slvKeyEvent.key = KeyboardEvent::Key::FUNCTION;
         slvKeyEvent.num = event->key() - Qt::Key_F1 + 1;
-    }
-    if (event->key() >= Qt::Key_Space && event->key() <= Qt::Key_yen) {
+    } else if (event->key() == Qt::Key_PageUp) {
+        slvKeyEvent.key = KeyboardEvent::Key::PAGE_UP;
+    } else if (event->key() == Qt::Key_PageDown) {
+        slvKeyEvent.key = KeyboardEvent::Key::PAGE_DOWN;
+    } else if (event->key() == Qt::Key_Up) {
+        slvKeyEvent.key = KeyboardEvent::Key::ARROW_UP;
+    } else if (event->key() == Qt::Key_Down) {
+        slvKeyEvent.key = KeyboardEvent::Key::ARROW_DOWN;
+    } else if (event->key() == Qt::Key_Left) {
+        slvKeyEvent.key = KeyboardEvent::Key::ARROW_LEFT;
+    } else if (event->key() == Qt::Key_Right) {
+        slvKeyEvent.key = KeyboardEvent::Key::ARROW_RIGHT;
+    } else if (event->key() >= Qt::Key_Space && event->key() <= Qt::Key_yen) {
         slvKeyEvent.key = KeyboardEvent::Key::CHARACTER;
         QString keyLower = event->text().toLower();
         slvKeyEvent.chr = keyLower.toUcs4().at(0);
@@ -714,6 +747,17 @@ SSTextWindow::SSTextWindow(QWidget* parent)
 
     setWidget(group);
     setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+
+    setStyleSheet(
+        "QDockWidget { background: #292929; border: none; color: #ebdbb2; }"
+        "QDockWidget::title { background: #1d2021; color: #ebdbb2; padding: 6px; }"
+        "QDockWidget::close-button, QDockWidget::float-button { background: #1d2021; }"
+        "QWidget { background: #292929; }"
+        "QScrollBar:vertical { background: #1d2021; width: 12px; border: none; }"
+        "QScrollBar::handle:vertical { background: #504945; min-height: 20px; border-radius: 4px; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }"
+        "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: #1d2021; }"
+    );
 }
 
 void SSTextWindow::sliderSlot(int value)
@@ -733,6 +777,16 @@ SSMainWindow::SSMainWindow()
 {
     ssView = new SSView;
     setCentralWidget(ssView);
+
+    setStyleSheet(
+        "QMainWindow { background: #292929; }"
+        "QMainWindow::separator { background: #1d2021; width: 2px; height: 2px; }"
+        "QToolBar { background: #292929; border: none; spacing: 2px; }"
+        "QMenuBar { background: #1d2021; color: #ebdbb2; }"
+        "QMenuBar::item:selected { background: #504945; }"
+        "QMenu { background: #1d2021; color: #ebdbb2; border: 1px solid #504945; }"
+        "QMenu::item:selected { background: #504945; }"
+    );
 }
 
 void SSMainWindow::closeEvent(QCloseEvent* ev)
