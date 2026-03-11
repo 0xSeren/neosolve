@@ -12,6 +12,17 @@ if(NOT WIN32 OR APPLE)
     endif()
 endif()
 
+# Set GUI toolkit name for about dialog
+if(USE_QT_GUI)
+    set(GUI_TOOLKIT "Qt")
+elseif(APPLE)
+    set(GUI_TOOLKIT "Cocoa")
+elseif(WIN32)
+    set(GUI_TOOLKIT "Win32")
+else()
+    set(GUI_TOOLKIT "GTK")
+endif()
+
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/config.h.in
                ${CMAKE_CURRENT_BINARY_DIR}/config.h)
 
@@ -59,6 +70,10 @@ endif()
 
 if(ENABLE_OPENMP)
     target_link_libraries(slvs_deps INTERFACE slvs_openmp)
+endif()
+
+if(USE_OPENCASCADE)
+    target_link_libraries(slvs_deps INTERFACE slvs_opencascade)
 endif()
 
 target_compile_options(slvs_deps
@@ -165,7 +180,28 @@ if(ENABLE_GUI OR ENABLE_CLI)
         srf/shell.cpp
         srf/surface.cpp
         srf/surfinter.cpp
-        srf/triangulate.cpp)
+        srf/triangulate.cpp
+        profiler.cpp
+        profiler.h)
+
+    if(ENABLE_PROFILING)
+        target_compile_definitions(solvespace-core PUBLIC ENABLE_PROFILING)
+    endif()
+
+    if(ENABLE_EIGEN_OPENMP)
+        target_compile_definitions(solvespace-core PRIVATE EIGEN_HAS_OPENMP=1)
+        message(STATUS "Enabling Eigen OpenMP parallelization for solvespace-core")
+    endif()
+
+    if(USE_OPENCASCADE)
+        target_sources(solvespace-core PRIVATE
+            occ/solidmodel.h
+            occ/solidmodel.cpp
+            occ/facebuilder.h
+            occ/facebuilder.cpp
+            occ/occutil.h
+            occ/occutil.cpp)
+    endif()
 
     target_include_directories(solvespace-core PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}

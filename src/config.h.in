@@ -16,4 +16,7 @@
 /* If we use GTK, can we use the native file chooser? */
 #cmakedefine HAVE_GTK_FILECHOOSERNATIVE
 
+/* Which GUI toolkit is being used? */
+#define GUI_TOOLKIT "@GUI_TOOLKIT@"
+
 #endif
