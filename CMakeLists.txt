@@ -72,6 +72,12 @@ set(ENABLE_OPENMP     OFF CACHE BOOL
     "Whether geometric operations will be parallelized using OpenMP")
 set(ENABLE_LTO        OFF CACHE BOOL
     "Whether interprocedural (global) optimizations are enabled")
+set(ENABLE_PROFILING  OFF CACHE BOOL
+    "Whether built-in profiling instrumentation is enabled")
+set(ENABLE_PROFILING_SYMBOLS OFF CACHE BOOL
+    "Whether to add debug symbols for external profilers (perf, valgrind)")
+set(USE_OPENCASCADE   ON CACHE BOOL
+    "Whether to use OpenCascade geometry kernel for solid modeling")
 option(FORCE_VENDORED_Eigen3
     "Whether we should use our bundled Eigen even in the presence of a system copy"
     OFF)
@@ -134,6 +140,14 @@ if(ENABLE_LTO)
     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif()
 
+if(ENABLE_PROFILING_SYMBOLS)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -g -fno-omit-frame-pointer")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -fno-omit-frame-pointer")
+        message(STATUS "Profiling symbols enabled for external profilers (perf, valgrind)")
+    endif()
+endif()
+
 if(ENABLE_OPENMP)
     find_package( OpenMP REQUIRED )
     if(OPENMP_FOUND)
@@ -144,6 +158,24 @@ if(ENABLE_OPENMP)
         target_include_directories(slvs_openmp SYSTEM INTERFACE
             ${OpenMP_CXX_INCLUDE_DIRS})
         message(STATUS "found OpenMP, compiling with flags: " ${OpenMP_CXX_FLAGS} )
+    endif()
+endif()
+
+if(USE_OPENCASCADE)
+    find_package(OpenCASCADE REQUIRED)
+    if(OpenCASCADE_FOUND)
+        add_library(slvs_opencascade INTERFACE)
+        target_include_directories(slvs_opencascade SYSTEM INTERFACE
+            ${OpenCASCADE_INCLUDE_DIR})
+        target_link_directories(slvs_opencascade INTERFACE
+            ${OpenCASCADE_LIBRARY_DIR})
+        target_link_libraries(slvs_opencascade INTERFACE
+            TKernel TKMath TKBRep TKTopAlgo TKPrim TKMesh
+            TKFillet TKOffset TKBO TKShHealing TKG3d TKGeomBase
+            TKGeomAlgo TKHLR TKDESTEP TKDEIGES TKXSBase)
+        target_compile_definitions(slvs_opencascade INTERFACE
+            HAVE_OPENCASCADE=1)
+        message(STATUS "Found OpenCASCADE: ${OpenCASCADE_INCLUDE_DIR}")
     endif()
 endif()
 
@@ -250,6 +282,8 @@ if(NOT EXISTS "${EIGEN3_INCLUDE_DIRS}")
     message(FATAL_ERROR "Eigen 3 not found on system or in-tree")
 endif()
 
+# Flag for Eigen parallelization (applied to specific targets in src/CMakeLists.txt)
+set(ENABLE_EIGEN_OPENMP ${ENABLE_OPENMP})
 
 if(ENABLE_GUI OR ENABLE_CLI)
     if(WIN32 OR APPLE OR EMSCRIPTEN)
