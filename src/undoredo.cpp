@@ -65,12 +65,18 @@ void SolveSpaceUI::PushFromCurrentOnto(UndoStack *uk) {
         dest.runningShell = {};
         dest.displayMesh = {};
         dest.displayOutlines = {};
+        dest.cachedTransformedMesh = {};
+        dest.cachedMeshValid = false;
 
         dest.remap = src.remap;
 
         dest.impMesh = {};
         dest.impShell = {};
         dest.impEntity = {};
+#ifdef HAVE_OPENCASCADE
+        dest.thisSolidModel = nullptr;
+        dest.runningSolidModel = nullptr;
+#endif
         ut->group.Add(&dest);
     }
     for(auto &src : SK.groupOrder) { ut->groupOrder.Add(&src); }

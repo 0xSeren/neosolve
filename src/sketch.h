@@ -24,6 +24,10 @@
 
 namespace SolveSpace {
 
+#ifdef HAVE_OPENCASCADE
+class SolidModelOcc;
+#endif
+
 class hConstraint;
 
 class Expr;
@@ -175,6 +179,7 @@ public:
         N_ROT_AA,
         N_ROT_TRANS,
         N_ROT_AXIS_TRANS,
+        N_MIRROR,
     };
 
     enum class Type : uint32_t {
@@ -184,9 +189,16 @@ public:
         LATHE                         = 5101,
         REVOLVE                       = 5102,
         HELIX                         = 5103,
+        FILLET                        = 5104,
+        CHAMFER                       = 5105,
+        SHELL                         = 5106,
+        LOFT                          = 5107,
+        SWEEP                         = 5108,
         ROTATE                        = 5200,
         TRANSLATE                     = 5201,
-        LINKED                        = 5300
+        MIRROR                        = 5202,
+        LINKED                        = 5300,
+        IMPORT_SOLID                  = 5301
     };
     Group::Type type;
 
@@ -263,9 +275,32 @@ public:
     SMesh           thisMesh;
     SMesh           runningMesh;
 
+#ifdef HAVE_OPENCASCADE
+    SolidModelOcc  *thisSolidModel = nullptr;
+    SolidModelOcc  *runningSolidModel = nullptr;
+
+    // For fillet/chamfer operations: indices of selected edges
+    std::vector<uint32_t> selectedEdges;
+    double filletRadius = 1.0;  // mm
+
+    // Source solid edges for selection (populated for fillet/chamfer groups)
+    struct SourceEdge {
+        Vector a, b;     // Edge endpoints
+        uint32_t index;  // Edge index for selection
+    };
+    std::vector<SourceEdge> sourceEdges;
+#endif
+
     bool            displayDirty;
+    bool            displayWasDragging; // Track if last display was in drag mode
     SMesh           displayMesh;
     SOutlineList    displayOutlines;
+
+    // Cached transformed mesh for IMPORT_SOLID (avoids retransforming when position unchanged)
+    SMesh           cachedTransformedMesh;
+    Vector          cachedOffset;
+    Quaternion      cachedQuat;
+    bool            cachedMeshValid;
 
     enum class CombineAs : uint32_t {
         UNION           = 0,
@@ -341,6 +376,7 @@ public:
     Group *PreviousGroup() const;
     Group *RunningMeshGroup() const;
     bool IsMeshGroup();
+    bool IsUsedAsSweepPath() const;
 
     void GenerateShellAndMesh();
     template<class T> void GenerateForStepAndRepeat(T *steps, T *outs, Group::CombineAs forWhat);
@@ -427,12 +463,14 @@ public:
         POINT_N_COPY           =  2012,
         POINT_N_ROT_AA         =  2013,
         POINT_N_ROT_AXIS_TRANS =  2014,
+        POINT_N_MIRROR         =  2015,
 
         NORMAL_IN_3D           =  3000,
         NORMAL_IN_2D           =  3001,
         NORMAL_N_COPY          =  3010,
         NORMAL_N_ROT           =  3011,
         NORMAL_N_ROT_AA        =  3012,
+        NORMAL_N_MIRROR        =  3013,
 
         DISTANCE               =  4000,
         DISTANCE_N_COPY        =  4001,
@@ -444,6 +482,7 @@ public:
         FACE_N_ROT_AA          =  5004,
         FACE_ROT_NORMAL_PT     =  5005,
         FACE_N_ROT_AXIS_TRANS  =  5006,
+        FACE_N_MIRROR          =  5007,
 
         WORKPLANE              = 10000,
         LINE_SEGMENT           = 11000,
@@ -689,7 +728,12 @@ public:
         ARC_LINE_TANGENT       = 123,
         CUBIC_LINE_TANGENT     = 124,
         CURVE_CURVE_TANGENT    = 125,
+        CIRCLE_LINE_TANGENT    = 126,
         EQUAL_RADIUS           = 130,
+        PT_PT_DISTANCE_MIN     = 140,  // d >= valA (inequality: minimum distance)
+        PT_PT_DISTANCE_MAX     = 141,  // d <= valA (inequality: maximum distance)
+        PT_ON_SEGMENT          = 142,  // point on finite line segment (0 <= t <= 1)
+        PT_ON_CUBIC            = 143,  // point on cubic Bezier curve
         WHERE_DRAGGED          = 200,
         ARC_ARC_LEN_RATIO      = 210,
         ARC_LINE_LEN_RATIO     = 211,

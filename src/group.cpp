@@ -8,6 +8,10 @@
 //-----------------------------------------------------------------------------
 #include "solvespace.h"
 
+#ifdef HAVE_OPENCASCADE
+#include "occ/solidmodel.h"
+#endif
+
 namespace SolveSpace {
 
 const hParam   Param::NO_PARAM = { 0 };
@@ -29,11 +33,24 @@ void Group::Clear() {
     runningShell.Clear();
     displayMesh.Clear();
     displayOutlines.Clear();
+    cachedTransformedMesh.Clear();
+    cachedMeshValid = false;
     impMesh.Clear();
     impShell.Clear();
     impEntity.Clear();
     // remap is the only one that doesn't get recreated when we regen
     remap.clear();
+
+#ifdef HAVE_OPENCASCADE
+    if(thisSolidModel) {
+        delete thisSolidModel;
+        thisSolidModel = nullptr;
+    }
+    if(runningSolidModel) {
+        delete runningSolidModel;
+        runningSolidModel = nullptr;
+    }
+#endif
 }
 
 void Group::AddParam(ParamList *param, hParam hp, double v) {
@@ -235,6 +252,80 @@ void Group::MenuGroup(Command id, Platform::Path linkFile) {
             g.name    = C_("group-name", "revolve");
             break;
 
+#ifdef HAVE_OPENCASCADE
+        case Command::GROUP_FILLET: {
+            Group *prevg = SK.GetGroup(SS.GW.activeGroup);
+            if(!prevg || !prevg->runningSolidModel || prevg->runningSolidModel->IsEmpty()) {
+                Error(_("Fillet requires a solid model from a previous group."));
+                return;
+            }
+            g.type = Type::FILLET;
+            g.opA = SS.GW.activeGroup;
+            g.valA = 1.0;  // default fillet radius in mm
+            g.name = C_("group-name", "fillet");
+            // Capture selected edges from the current selection
+            prevg->runningSolidModel->FindSelectedEdges(&SS.GW.selection, &g.selectedEdges);
+            break;
+        }
+
+        case Command::GROUP_CHAMFER: {
+            Group *prevg = SK.GetGroup(SS.GW.activeGroup);
+            if(!prevg || !prevg->runningSolidModel || prevg->runningSolidModel->IsEmpty()) {
+                Error(_("Chamfer requires a solid model from a previous group."));
+                return;
+            }
+            g.type = Type::CHAMFER;
+            g.opA = SS.GW.activeGroup;
+            g.valA = 1.0;  // default chamfer distance in mm
+            g.name = C_("group-name", "chamfer");
+            // Capture selected edges from the current selection
+            prevg->runningSolidModel->FindSelectedEdges(&SS.GW.selection, &g.selectedEdges);
+            break;
+        }
+
+        case Command::GROUP_SHELL: {
+            Group *prevg = SK.GetGroup(SS.GW.activeGroup);
+            if(!prevg || !prevg->runningSolidModel || prevg->runningSolidModel->IsEmpty()) {
+                Error(_("Shell requires a solid model from a previous group."));
+                return;
+            }
+            g.type = Type::SHELL;
+            g.opA = SS.GW.activeGroup;
+            g.valA = 1.0;  // default wall thickness in mm
+            g.name = C_("group-name", "shell");
+            break;
+        }
+
+        case Command::GROUP_LOFT: {
+            // For loft, we need two sketch groups with closed profiles
+            // The user should select the first profile, then create loft,
+            // then select the second profile in the text window
+            if(!SS.GW.LockedInWorkplane()) {
+                Error(_("Loft requires a planar sketch. Select a workplane first."));
+                return;
+            }
+            g.type = Type::LOFT;
+            g.opA = SS.GW.activeGroup;  // First profile
+            g.opB = {};  // Second profile to be set later
+            g.name = C_("group-name", "loft");
+            break;
+        }
+
+        case Command::GROUP_SWEEP: {
+            // Sweep a profile along a path
+            // opA = path sketch (active group), opB = profile sketch (selected later)
+            if(!SS.GW.LockedInWorkplane()) {
+                Error(_("Sweep requires a planar sketch. Select a workplane first."));
+                return;
+            }
+            g.type = Type::SWEEP;
+            g.opA = SS.GW.activeGroup;  // Path to sweep along
+            g.opB = {};  // Profile to sweep (set later)
+            g.name = C_("group-name", "sweep");
+            break;
+        }
+#endif
+
         case Command::GROUP_HELIX:
             if(!SS.GW.LockedInWorkplane()) {
                 Error(_("Helix operation can only be applied to planar sketches."));
@@ -300,6 +391,14 @@ void Group::MenuGroup(Command id, Platform::Path linkFile) {
             g.name = C_("group-name", "translate");
             break;
 
+        case Command::GROUP_MIRROR:
+            g.type = Type::MIRROR;
+            g.opA = SS.GW.activeGroup;
+            g.predef.entityB = SS.GW.ActiveWorkplane();
+            g.activeWorkplane = SS.GW.ActiveWorkplane();
+            g.name = C_("group-name", "mirror");
+            break;
+
         case Command::GROUP_LINK: {
             g.type = Type::LINKED;
             g.meshCombine = CombineAs::ASSEMBLE;
@@ -323,6 +422,27 @@ void Group::MenuGroup(Command id, Platform::Path linkFile) {
             }
             break;
         }
+
+#ifdef HAVE_OPENCASCADE
+        case Command::GROUP_IMPORT_SOLID: {
+            g.type = Type::IMPORT_SOLID;
+            g.meshCombine = CombineAs::ASSEMBLE;
+            Platform::FileDialogRef dialog = Platform::CreateOpenFileDialog(SS.GW.window);
+            dialog->AddFilters(Platform::SolidImportFileFilters);
+            dialog->ThawChoices(settings, "ImportSolid");
+            if(!dialog->RunModal()) return;
+            dialog->FreezeChoices(settings, "ImportSolid");
+            g.linkFile = dialog->GetFilename();
+
+            g.name = g.linkFile.FileStem();
+            for(size_t i = 0; i < g.name.length(); i++) {
+                if(!(isalnum(g.name[i]) || (unsigned)g.name[i] >= 0x80)) {
+                    g.name[i] = '-';
+                }
+            }
+            break;
+        }
+#endif
 
         default: ssassert(false, "Unexpected menu ID");
     }
@@ -398,8 +518,8 @@ void Group::TransformImportedBy(Vector t, Quaternion q) {
 
 bool Group::IsForcedToMeshBySource() const {
     const Group *srcg = this;
-    if(type == Type::TRANSLATE || type == Type::ROTATE) {
-        // A step and repeat gets merged against the group's previous group,
+    if(type == Type::TRANSLATE || type == Type::ROTATE || type == Type::MIRROR) {
+        // A step and repeat or mirror gets merged against the group's previous group,
         // not our own previous group.
         srcg = SK.GetGroup(opA);
         if(srcg->forceToMesh) return true;
@@ -764,6 +884,46 @@ void Group::Generate(EntityList *entity, ParamList *param)
             }
             return;
         }
+        case Type::MIRROR: {
+            // inherit meshCombine from source group
+            Group *srcg = SK.GetGroup(opA);
+            meshCombine = srcg->meshCombine;
+
+            // Get the mirror plane from predef.entityB (a workplane)
+            // The mirror plane is defined by the workplane's origin and normal
+            Vector mirrorOrigin, mirrorNormal;
+            if(predef.entityB == Entity::FREE_IN_3D) {
+                // No workplane - use the XY plane (origin at 0,0,0, normal in Z)
+                mirrorOrigin = Vector::From(0, 0, 0);
+                mirrorNormal = Vector::From(0, 0, 1);
+            } else {
+                Entity *wrkpl = SK.GetEntity(predef.entityB);
+                mirrorOrigin = SK.GetEntity(wrkpl->point[0])->PointGetNum();
+                mirrorNormal = wrkpl->Normal()->NormalN();
+            }
+
+            // Store mirror plane parameters: origin (0-2) and normal (3-5)
+            AddParam(param, h.param(0), mirrorOrigin.x);
+            AddParam(param, h.param(1), mirrorOrigin.y);
+            AddParam(param, h.param(2), mirrorOrigin.z);
+            AddParam(param, h.param(3), mirrorNormal.x);
+            AddParam(param, h.param(4), mirrorNormal.y);
+            AddParam(param, h.param(5), mirrorNormal.z);
+
+            // Copy all entities from source group with mirror transformation
+            for(i = 0; i < entity->n; i++) {
+                Entity *e = &(entity->Get(i));
+                if(e->group != opA) continue;
+
+                e->CalculateNumerical(/*forExport=*/false);
+                CopyEntity(entity, e,
+                    0, REMAP_LAST,
+                    h.param(0), h.param(1), h.param(2),
+                    h.param(3), h.param(4), h.param(5), NO_PARAM, NO_PARAM,
+                    CopyAs::N_MIRROR);
+            }
+            return;
+        }
         case Type::LINKED:
             // The translation vector
             AddParam(param, h.param(0), gp.x);
@@ -784,6 +944,37 @@ void Group::Generate(EntityList *entity, ParamList *param)
                     CopyAs::N_ROT_TRANS);
             }
             return;
+
+#ifdef HAVE_OPENCASCADE
+        case Type::FILLET:
+        case Type::CHAMFER:
+        case Type::SHELL:
+        case Type::LOFT:
+        case Type::SWEEP:
+            // These operations don't generate entities; they operate on solid geometry
+            return;
+
+        case Type::IMPORT_SOLID:
+            // Translation vector for positioning the imported solid
+            AddParam(param, h.param(0), gp.x);
+            AddParam(param, h.param(1), gp.y);
+            AddParam(param, h.param(2), gp.z);
+            // Rotation quaternion for orienting the imported solid
+            AddParam(param, h.param(3), 1);
+            AddParam(param, h.param(4), 0);
+            AddParam(param, h.param(5), 0);
+            AddParam(param, h.param(6), 0);
+
+            // Copy bounding box entities from impEntity with transformation
+            for(i = 0; i < impEntity.n; i++) {
+                Entity *ie = &(impEntity[i]);
+                CopyEntity(entity, ie, 0, 0,
+                    h.param(0), h.param(1), h.param(2),
+                    h.param(3), h.param(4), h.param(5), h.param(6), NO_PARAM,
+                    CopyAs::N_ROT_TRANS);
+            }
+            return;
+#endif
     }
     ssassert(false, "Unexpected group type");
 }
@@ -801,8 +992,12 @@ void Group::AddEq(IdList<Equation,hEquation> *l, Expr *expr, int index) {
 }
 
 void Group::GenerateEquations(IdList<Equation,hEquation> *l) {
-    if(type == Type::LINKED) {
-        // Normalize the quaternion
+    if(type == Type::LINKED
+#ifdef HAVE_OPENCASCADE
+       || type == Type::IMPORT_SOLID
+#endif
+    ) {
+        // Normalize the quaternion to prevent scaling
         ExprQuaternion q = {
             Expr::From(h.param(3)),
             Expr::From(h.param(4)),
@@ -1085,6 +1280,7 @@ void Group::CopyEntity(EntityList *el,
         case Entity::Type::POINT_N_ROT_TRANS:
         case Entity::Type::POINT_N_ROT_AA:
         case Entity::Type::POINT_N_ROT_AXIS_TRANS:
+        case Entity::Type::POINT_N_MIRROR:
         case Entity::Type::POINT_IN_3D:
         case Entity::Type::POINT_IN_2D:
             if(as == CopyAs::N_TRANS) {
@@ -1094,6 +1290,16 @@ void Group::CopyEntity(EntityList *el,
                 en.param[2] = dz;
             } else if(as == CopyAs::NUMERIC) {
                 en.type = Entity::Type::POINT_N_COPY;
+            } else if(as == CopyAs::N_MIRROR) {
+                en.type = Entity::Type::POINT_N_MIRROR;
+                // Mirror plane origin
+                en.param[0] = dx;
+                en.param[1] = dy;
+                en.param[2] = dz;
+                // Mirror plane normal (using qw, qvx, qvy slots since we passed them that way)
+                en.param[3] = qw;
+                en.param[4] = qvx;
+                en.param[5] = qvy;
             } else {
                 if(as == CopyAs::N_ROT_AA) {
                     en.type = Entity::Type::POINT_N_ROT_AA;
@@ -1119,10 +1325,20 @@ void Group::CopyEntity(EntityList *el,
         case Entity::Type::NORMAL_N_COPY:
         case Entity::Type::NORMAL_N_ROT:
         case Entity::Type::NORMAL_N_ROT_AA:
+        case Entity::Type::NORMAL_N_MIRROR:
         case Entity::Type::NORMAL_IN_3D:
         case Entity::Type::NORMAL_IN_2D:
             if(as == CopyAs::N_TRANS || as == CopyAs::NUMERIC) {
                 en.type = Entity::Type::NORMAL_N_COPY;
+            } else if(as == CopyAs::N_MIRROR) {
+                en.type = Entity::Type::NORMAL_N_MIRROR;
+                // Mirror plane origin (dx, dy, dz) and normal (qw, qvx, qvy)
+                en.param[0] = dx;
+                en.param[1] = dy;
+                en.param[2] = dz;
+                en.param[3] = qw;
+                en.param[4] = qvx;
+                en.param[5] = qvy;
             } else {  // N_ROT_AXIS_TRANS probably doesn't warrant a new entity Type
                 if(as == CopyAs::N_ROT_AA || as == CopyAs::N_ROT_AXIS_TRANS) {
                     en.type = Entity::Type::NORMAL_N_ROT_AA;
@@ -1153,6 +1369,7 @@ void Group::CopyEntity(EntityList *el,
         case Entity::Type::FACE_N_ROT_AA:
         case Entity::Type::FACE_ROT_NORMAL_PT:
         case Entity::Type::FACE_N_ROT_AXIS_TRANS:
+        case Entity::Type::FACE_N_MIRROR:
             if(as == CopyAs::N_TRANS) {
                 en.type = Entity::Type::FACE_N_TRANS;
                 en.param[0] = dx;
@@ -1160,6 +1377,15 @@ void Group::CopyEntity(EntityList *el,
                 en.param[2] = dz;
             } else if (as == CopyAs::NUMERIC) {
                 en.type = Entity::Type::FACE_NORMAL_PT;
+            } else if (as == CopyAs::N_MIRROR) {
+                en.type = Entity::Type::FACE_N_MIRROR;
+                // Mirror plane origin (dx, dy, dz) and normal (qw, qvx, qvy)
+                en.param[0] = dx;
+                en.param[1] = dy;
+                en.param[2] = dz;
+                en.param[3] = qw;
+                en.param[4] = qvx;
+                en.param[5] = qvy;
             } else if (as == CopyAs::N_ROT_AXIS_TRANS) {
                 en.type = Entity::Type::FACE_N_ROT_AXIS_TRANS;
                 en.param[0] = dx;
