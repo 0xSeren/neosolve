@@ -21,18 +21,20 @@ void SolveSpaceUI::Init() {
     Platform::SettingsRef settings = Platform::GetSettings();
 
     SS.tangentArcRadius = 10.0;
+    SS.chamferDistance = 10.0;
     SS.explodeDistance = 1.0;
 
     // Then, load the registry settings.
     // Default list of colors for the model material
-    modelColor[0] = settings->ThawColor("ModelColor_0", RGBi(150, 150, 150));
-    modelColor[1] = settings->ThawColor("ModelColor_1", RGBi(100, 100, 100));
-    modelColor[2] = settings->ThawColor("ModelColor_2", RGBi( 30,  30,  30));
-    modelColor[3] = settings->ThawColor("ModelColor_3", RGBi(150,   0,   0));
-    modelColor[4] = settings->ThawColor("ModelColor_4", RGBi(  0, 100,   0));
-    modelColor[5] = settings->ThawColor("ModelColor_5", RGBi(  0,  80,  80));
-    modelColor[6] = settings->ThawColor("ModelColor_6", RGBi(  0,   0, 130));
-    modelColor[7] = settings->ThawColor("ModelColor_7", RGBi( 80,   0,  80));
+    modelColor[0] = settings->ThawColor("ModelColor_0", RGBi(235, 219, 178));
+    modelColor[1] = settings->ThawColor("ModelColor_1", RGBi(146, 131, 116));
+    modelColor[2] = settings->ThawColor("ModelColor_2", RGBi( 40,  40,  40));
+    modelColor[3] = settings->ThawColor("ModelColor_3", RGBi(251,  73,  52));
+    modelColor[4] = settings->ThawColor("ModelColor_4", RGBi(184, 187,  38));
+    modelColor[5] = settings->ThawColor("ModelColor_5", RGBi(142, 192, 124));
+    modelColor[6] = settings->ThawColor("ModelColor_6", RGBi(131, 165, 152));
+    modelColor[7] = settings->ThawColor("ModelColor_7", RGBi(211, 134, 155));
+
     // Light intensities
     lightIntensity[0] = settings->ThawFloat("LightIntensity_0", 1.0);
     lightIntensity[1] = settings->ThawFloat("LightIntensity_1", 0.5);
@@ -46,6 +48,7 @@ void SolveSpaceUI::Init() {
     lightDir[1].z = settings->ThawFloat("LightDir_1_Forward",  0.0);
 
     exportMode = false;
+    bboxValid = false;
     // Chord tolerance
     chordTol = settings->ThawFloat("ChordTolerancePct", 0.1);
     // Max pwl segments to generate
@@ -100,7 +103,7 @@ void SolveSpaceUI::Init() {
     // Export pwl curves (instead of exact) always
     exportPwlCurves = settings->ThawBool("ExportPwlCurves", false);
     // Background color on-screen
-    backgroundColor = settings->ThawColor("BackgroundColor", RGBi(0, 0, 0));
+    backgroundColor = settings->ThawColor("BackgroundColor", RGBi(41, 41, 41));
     // Whether export canvas size is fixed or derived from bbox
     exportCanvasSizeAuto = settings->ThawBool("ExportCanvasSizeAuto", true);
     // Margins for automatic canvas size
@@ -121,6 +124,10 @@ void SolveSpaceUI::Init() {
     gCode.plungeFeed    = settings->ThawFloat("GCode_PlungeFeed", 10.0);
     // Show toolbar in the graphics window
     showToolbar = settings->ThawBool("ShowToolbar", true);
+    textWindowDocked = settings->ThawBool("TextWindowDocked", true);
+    // Show REF constraints and comments independently
+    GW.showRefConstraints = settings->ThawBool("ShowRefConstraints", true);
+    GW.showComments = settings->ThawBool("ShowComments", true);
     // Recent files menus
     for(size_t i = 0; i < MAX_RECENT; i++) {
         std::string rawPath = settings->ThawString("RecentFile_" + std::to_string(i), "");
@@ -222,6 +229,7 @@ void SolveSpaceUI::Exit() {
     // Model colors
     for(size_t i = 0; i < MODEL_COLORS; i++)
         settings->FreezeColor("ModelColor_" + std::to_string(i), modelColor[i]);
+
     // Light intensities
     settings->FreezeFloat("LightIntensity_0", (float)lightIntensity[0]);
     settings->FreezeFloat("LightIntensity_1", (float)lightIntensity[1]);
@@ -307,6 +315,10 @@ void SolveSpaceUI::Exit() {
     settings->FreezeFloat("GCode_PlungeFeed", gCode.plungeFeed);
     // Show toolbar in the graphics window
     settings->FreezeBool("ShowToolbar", showToolbar);
+    settings->FreezeBool("TextWindowDocked", textWindowDocked);
+    // Show REF constraints and comments independently
+    settings->FreezeBool("ShowRefConstraints", GW.showRefConstraints);
+    settings->FreezeBool("ShowComments", GW.showComments);
     // Autosave timer
     settings->FreezeInt("AutosaveInterval", autosaveInterval);
 
@@ -1105,7 +1117,7 @@ void SolveSpaceUI::MenuHelp(Command id) {
 
         case Command::ABOUT:
             Message(_(
-"This is SolveSpace version %s.\n"
+"This is SolveSpace version %s (%s).\n"
 "\n"
 "For more information, see http://solvespace.com/\n"
 "\n"
@@ -1117,7 +1129,7 @@ void SolveSpaceUI::MenuHelp(Command id) {
 "law. For details, visit http://gnu.org/licenses/\n"
 "\n"
 "© 2008-%d Jonathan Westhues and other authors.\n"),
-PACKAGE_VERSION, 2026);
+PACKAGE_VERSION, GUI_TOOLKIT, 2026);
             break;
 
         case Command::GITHUB:
@@ -1143,6 +1155,7 @@ void SolveSpaceUI::Clear() {
     GW.explodeMenuItem = NULL;
     GW.showToolbarMenuItem = NULL;
     GW.showTextWndMenuItem = NULL;
+    GW.dockTextWndMenuItem = NULL;
     GW.fullScreenMenuItem = NULL;
     GW.unitsMmMenuItem = NULL;
     GW.unitsMetersMenuItem = NULL;
@@ -1165,7 +1178,7 @@ void Sketch::Clear() {
     param.Clear();
 }
 
-BBox Sketch::CalculateEntityBBox(bool includingInvisible) {
+BBox Sketch::CalculateEntityBBox(bool includingInvisible, bool includeMeshes) {
     BBox box = {};
     bool first = true;
 
@@ -1216,6 +1229,19 @@ BBox Sketch::CalculateEntityBBox(bool includingInvisible) {
 
             default:
                 continue;
+        }
+    }
+
+    // Include mesh bounding boxes from groups to properly calculate
+    // chord tolerance based on the full 3D shell, not just sketch entities.
+    if(includeMeshes) {
+        for(const Group &g : group) {
+            if(g.displayMesh.l.n > 0) {
+                Vector meshMin, meshMax;
+                g.displayMesh.GetBounding(&meshMax, &meshMin);
+                includePoint(meshMin);
+                includePoint(meshMax);
+            }
         }
     }
 

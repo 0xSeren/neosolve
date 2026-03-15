@@ -7,6 +7,7 @@
 // Copyright 2008-2013 Jonathan Westhues.
 //-----------------------------------------------------------------------------
 #include "solvespace.h"
+#include "profiler.h"
 
 namespace SolveSpace {
 
@@ -28,6 +29,7 @@ void SolveSpaceUI::MarkGroupDirty(hGroup hg, bool onlyThis) {
         }
     }
     unsaved = true;
+    bboxValid = false;  // Invalidate cached bbox
     ScheduleGenerateAll();
 }
 
@@ -150,6 +152,7 @@ bool SolveSpaceUI::PruneRequestsAndConstraints(hGroup hg) {
 }
 
 void SolveSpaceUI::GenerateAll(Generate type, bool andFindFree, bool genForBBox) {
+    PROFILE_FUNCTION();
     int first = 0, last = 0, i;
 
     uint64_t startMillis = GetMilliseconds(),
@@ -214,8 +217,15 @@ void SolveSpaceUI::GenerateAll(Generate type, bool andFindFree, bool genForBBox)
     // If we're generating entities for display, first we need to find
     // the bounding box to turn relative chord tolerance to absolute.
     if(!SS.exportMode && !genForBBox) {
-        GenerateAll(type, andFindFree, /*genForBBox=*/true);
-        BBox box = SK.CalculateEntityBBox(/*includeInvisibles=*/true);
+        BBox box;
+        if(SS.bboxValid) {
+            // Use cached bbox from previous generation
+            box = SS.cachedEntityBBox;
+        } else {
+            // First time or cache invalidated: do the bbox pass
+            GenerateAll(type, andFindFree, /*genForBBox=*/true);
+            box = SK.CalculateEntityBBox(/*includeInvisibles=*/true);
+        }
         Vector size = box.maxp.Minus(box.minp);
         double maxSize = std::max({ size.x, size.y, size.z });
         chordTolCalculated = maxSize * chordTol / 100.0;
@@ -244,21 +254,24 @@ void SolveSpaceUI::GenerateAll(Generate type, bool andFindFree, bool genForBBox)
         if(PruneGroups(hg))
             goto pruned;
 
-        int groupRequestIndex = 0;
-        for(auto &req : SK.request) {
-            Request *r = &req;
-            if(r->group != hg) continue;
-            r->groupRequestIndex = groupRequestIndex++;
+        {
+            PROFILE_SCOPE("EntityGeneration");
+            int groupRequestIndex = 0;
+            for(auto &req : SK.request) {
+                Request *r = &req;
+                if(r->group != hg) continue;
+                r->groupRequestIndex = groupRequestIndex++;
 
-            r->Generate(&(SK.entity), &(SK.param));
-        }
-        for(auto &con : SK.constraint) {
-            Constraint *c = &con;
-            if(c->group != hg) continue;
+                r->Generate(&(SK.entity), &(SK.param));
+            }
+            for(auto &con : SK.constraint) {
+                Constraint *c = &con;
+                if(c->group != hg) continue;
 
-            c->Generate(&(SK.param));
+                c->Generate(&(SK.param));
+            }
+            SK.GetGroup(hg)->Generate(&(SK.entity), &(SK.param));
         }
-        SK.GetGroup(hg)->Generate(&(SK.entity), &(SK.param));
 
         // The requests and constraints depend on stuff in this or the
         // previous group, so check them after generating.
@@ -290,10 +303,10 @@ void SolveSpaceUI::GenerateAll(Generate type, bool andFindFree, bool genForBBox)
                 // and then regenerate the mesh based on the solved stuff.
                 Group *g = SK.GetGroup(hg);
                 if(genForBBox) {
-                    SolveGroupAndReport(hg, andFindFree);
-                    g->GenerateLoops();
+                    { PROFILE_SCOPE("SolveGroup"); SolveGroupAndReport(hg, andFindFree); }
+                    { PROFILE_SCOPE("GenerateLoops"); g->GenerateLoops(); }
                 } else {
-                    g->GenerateShellAndMesh();
+                    { PROFILE_SCOPE("GenerateShellAndMesh"); g->GenerateShellAndMesh(); }
                     g->clean = true;
                 }
             } else {
@@ -393,6 +406,14 @@ void SolveSpaceUI::GenerateAll(Generate type, bool andFindFree, bool genForBBox)
             typeStr,
             (genForBBox ? " (for bounding box)" : ""),
             GetMilliseconds() - startMillis);
+    }
+
+    // Update cached bbox for next generation (avoids double-pass)
+    // Include mesh bounds so chord tolerance is based on the full 3D shell
+    if(!genForBBox && !SS.exportMode) {
+        SS.cachedEntityBBox = SK.CalculateEntityBBox(/*includeInvisibles=*/true,
+                                                      /*includeMeshes=*/true);
+        SS.bboxValid = true;
     }
 
     return;
