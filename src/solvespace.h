@@ -375,6 +375,7 @@ class Step2dFileWriter : public VectorFileWriter {
 class GCodeFileWriter : public VectorFileWriter {
 public:
     SEdgeList sel;
+    SBezierList sbl;  // Store original beziers for arc detection
     void StartPath( RgbaColor strokeRgb, double lineWidth,
                     bool filled, RgbaColor fillRgb, hStyle hs) override;
     void FinishPath(RgbaColor strokeRgb, double lineWidth,
@@ -418,7 +419,7 @@ public:
 
     void Clear();
 
-    BBox CalculateEntityBBox(bool includingInvisible);
+    BBox CalculateEntityBBox(bool includingInvisible, bool includeMeshes = false);
     Group *GetRunningMeshGroupFor(hGroup h);
 };
 #undef ENTITY
@@ -473,11 +474,14 @@ public:
     // Little bits of extra configuration state
     enum { MODEL_COLORS = 8 };
     RgbaColor modelColor[MODEL_COLORS];
+
     Vector   lightDir[2];
     double   lightIntensity[2];
     double   ambientIntensity;
     double   chordTol;
     double   chordTolCalculated;
+    BBox     cachedEntityBBox;
+    bool     bboxValid;
     int      maxSegments;
     double   exportChordTol;
     int      exportMaxSegments;
@@ -499,6 +503,7 @@ public:
     bool     immediatelyEditDimension;
     bool     automaticLineConstraints;
     bool     showToolbar;
+    bool     textWindowDocked;
     Platform::Path screenshotFile;
     RgbaColor backgroundColor;
     bool     exportShadedTriangles;
@@ -554,6 +559,12 @@ public:
     double tangentArcRadius;
     bool tangentArcManual;
     bool tangentArcModify;
+
+    // Some stuff relating to chamfers created non-parametrically
+    // as special requests (similar to tangent arcs but creates line instead of arc).
+    double chamferDistance;
+    bool chamferManual;
+    bool chamferModify;
 
     // The platform-dependent code calls this before entering the msg loop
     void Init();
