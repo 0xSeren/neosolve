@@ -4,11 +4,568 @@
 // proceed by ear-clipping; the resulting mesh should be watertight and not
 // awful numerically, but has no special properties (Delaunay, etc.).
 //
+// For larger polygons (n > 50), we use monotone polygon triangulation which
+// achieves O(n log n) complexity instead of O(n²) ear-clipping.
+//
 // Copyright 2008-2013 Jonathan Westhues.
 //-----------------------------------------------------------------------------
 #include "solvespace.h"
+#include <algorithm>
+#include <set>
+#include <map>
 
 namespace SolveSpace {
+
+//-----------------------------------------------------------------------------
+// Monotone Polygon Triangulation - O(n log n) algorithm
+//-----------------------------------------------------------------------------
+
+namespace {
+
+// Vertex type for sweep line algorithm
+enum class MonotoneVertexType {
+    START,          // Both neighbors below, convex angle
+    END,            // Both neighbors above, convex angle
+    SPLIT,          // Both neighbors below, reflex angle
+    MERGE,          // Both neighbors above, reflex angle
+    REGULAR_LEFT,   // Polygon interior is to the right
+    REGULAR_RIGHT   // Polygon interior is to the left
+};
+
+struct MonotoneVertex {
+    int index;          // Index in original contour
+    Vector p;           // Position
+    MonotoneVertexType type;
+    int prev, next;     // Indices of adjacent vertices in contour
+};
+
+// Compare vertices by y-coordinate (then x for ties) for sweep line
+struct VertexCompare {
+    const std::vector<MonotoneVertex> &vertices;
+
+    VertexCompare(const std::vector<MonotoneVertex> &v) : vertices(v) {}
+
+    bool operator()(int a, int b) const {
+        const Vector &pa = vertices[a].p;
+        const Vector &pb = vertices[b].p;
+        // Higher y first (top to bottom), then smaller x
+        if(fabs(pa.y - pb.y) > LENGTH_EPS) return pa.y > pb.y;
+        return pa.x < pb.x;
+    }
+};
+
+// Edge in the sweep line status structure
+struct SweepEdge {
+    int upperVertex;    // Higher y endpoint
+    int lowerVertex;    // Lower y endpoint
+    int helper;         // Current helper vertex for this edge
+
+    // Compute x-coordinate of edge at given y
+    double XAtY(double y, const std::vector<MonotoneVertex> &vertices) const {
+        const Vector &p1 = vertices[upperVertex].p;
+        const Vector &p2 = vertices[lowerVertex].p;
+        if(fabs(p1.y - p2.y) < LENGTH_EPS) return std::min(p1.x, p2.x);
+        double t = (y - p2.y) / (p1.y - p2.y);
+        return p2.x + t * (p1.x - p2.x);
+    }
+};
+
+// Compare edges by x-coordinate at current sweep line y
+struct EdgeCompare {
+    const std::vector<MonotoneVertex> &vertices;
+    double currentY;
+
+    EdgeCompare(const std::vector<MonotoneVertex> &v) : vertices(v), currentY(0) {}
+
+    bool operator()(const SweepEdge &a, const SweepEdge &b) const {
+        double ax = a.XAtY(currentY, vertices);
+        double bx = b.XAtY(currentY, vertices);
+        if(fabs(ax - bx) > LENGTH_EPS) return ax < bx;
+        // Tie-breaker: use lower vertex x
+        return vertices[a.lowerVertex].p.x < vertices[b.lowerVertex].p.x;
+    }
+};
+
+// Determine vertex type based on neighbors
+MonotoneVertexType ClassifyVertex(const std::vector<MonotoneVertex> &vertices, int idx) {
+    const MonotoneVertex &v = vertices[idx];
+    const Vector &p = v.p;
+    const Vector &prev = vertices[v.prev].p;
+    const Vector &next = vertices[v.next].p;
+
+    bool prevBelow = (prev.y < p.y) || (fabs(prev.y - p.y) < LENGTH_EPS && prev.x > p.x);
+    bool nextBelow = (next.y < p.y) || (fabs(next.y - p.y) < LENGTH_EPS && next.x > p.x);
+
+    if(!prevBelow && !nextBelow) {
+        // Both neighbors above - this is an END or MERGE vertex
+        // Check if angle is convex (interior angle < 180°)
+        Vector e1 = prev.Minus(p);
+        Vector e2 = next.Minus(p);
+        double cross = e1.x * e2.y - e1.y * e2.x;
+        return (cross > 0) ? MonotoneVertexType::END : MonotoneVertexType::MERGE;
+    }
+    else if(prevBelow && nextBelow) {
+        // Both neighbors below - this is a START or SPLIT vertex
+        Vector e1 = prev.Minus(p);
+        Vector e2 = next.Minus(p);
+        double cross = e1.x * e2.y - e1.y * e2.x;
+        return (cross > 0) ? MonotoneVertexType::START : MonotoneVertexType::SPLIT;
+    }
+    else {
+        // One above, one below - regular vertex
+        // Determine if interior is to left or right
+        Vector e1 = prev.Minus(p);
+        Vector e2 = next.Minus(p);
+        double cross = e1.x * e2.y - e1.y * e2.x;
+        return (cross > 0) ? MonotoneVertexType::REGULAR_LEFT : MonotoneVertexType::REGULAR_RIGHT;
+    }
+}
+
+// Triangulate a y-monotone polygon using the stack-based O(n) algorithm
+void TriangulateMonotonePolygon(const std::vector<int> &polygon,
+                                 const std::vector<MonotoneVertex> &vertices,
+                                 SMesh *mesh, double scaledEps) {
+    if(polygon.size() < 3) return;
+
+    int n = (int)polygon.size();
+
+    if(polygon.size() == 3) {
+        STriangle tr = {};
+        tr.a = vertices[polygon[0]].p;
+        tr.b = vertices[polygon[1]].p;
+        tr.c = vertices[polygon[2]].p;
+        if(tr.Normal().MagSquared() >= scaledEps * scaledEps) {
+            mesh->AddTriangle(&tr);
+        }
+        return;
+    }
+
+    // Sort vertices by y-coordinate (descending)
+    std::vector<int> sorted = polygon;
+    std::sort(sorted.begin(), sorted.end(), [&vertices](int a, int b) {
+        const Vector &pa = vertices[a].p;
+        const Vector &pb = vertices[b].p;
+        if(fabs(pa.y - pb.y) > LENGTH_EPS) return pa.y > pb.y;
+        return pa.x < pb.x;
+    });
+
+    // Find left and right chains
+    // The leftmost top vertex starts the left chain
+    std::set<int> leftChain, rightChain;
+
+    // Walk from top to bottom on each side
+    int topIdx = sorted[0];
+    int botIdx = sorted[sorted.size() - 1];
+
+    // Find position in polygon
+    int topPos = -1;
+    for(size_t i = 0; i < polygon.size(); i++) {
+        if(polygon[i] == topIdx) { topPos = (int)i; break; }
+    }
+
+    // Walk forward (left chain) and backward (right chain)
+    for(int pos = topPos; polygon[pos] != botIdx; pos = (pos + 1) % n) {
+        leftChain.insert(polygon[pos]);
+    }
+    leftChain.insert(botIdx);
+
+    for(int pos = topPos; polygon[pos] != botIdx; pos = (pos - 1 + n) % n) {
+        rightChain.insert(polygon[pos]);
+    }
+    rightChain.insert(botIdx);
+
+    // Stack-based triangulation
+    std::vector<int> stack;
+    stack.push_back(sorted[0]);
+    stack.push_back(sorted[1]);
+
+    for(size_t i = 2; i < sorted.size() - 1; i++) {
+        int vi = sorted[i];
+        int top = stack.back();
+
+        bool viOnLeft = leftChain.count(vi) > 0 && rightChain.count(vi) == 0;
+        bool topOnLeft = leftChain.count(top) > 0 && rightChain.count(top) == 0;
+        bool sameChain = (viOnLeft == topOnLeft);
+
+        if(!sameChain) {
+            // vi is on opposite chain from stack top
+            // Pop all vertices and form triangles
+            while(stack.size() > 1) {
+                int v1 = stack.back(); stack.pop_back();
+                int v2 = stack.back();
+
+                STriangle tr = {};
+                tr.a = vertices[vi].p;
+                tr.b = vertices[v1].p;
+                tr.c = vertices[v2].p;
+
+                if(tr.Normal().MagSquared() >= scaledEps * scaledEps) {
+                    mesh->AddTriangle(&tr);
+                }
+            }
+            stack.pop_back();
+            stack.push_back(top);
+            stack.push_back(vi);
+        }
+        else {
+            // vi is on same chain as stack top
+            // Pop vertices while we can form valid triangles
+            int lastPopped = stack.back();
+            stack.pop_back();
+
+            while(!stack.empty()) {
+                int v2 = stack.back();
+
+                // Check if diagonal vi-v2 is inside the polygon
+                Vector e1 = vertices[lastPopped].p.Minus(vertices[vi].p);
+                Vector e2 = vertices[v2].p.Minus(vertices[vi].p);
+                double cross = e1.x * e2.y - e1.y * e2.x;
+
+                // For left chain, cross should be positive; for right, negative
+                bool valid = viOnLeft ? (cross > LENGTH_EPS) : (cross < -LENGTH_EPS);
+
+                if(!valid) break;
+
+                STriangle tr = {};
+                tr.a = vertices[vi].p;
+                tr.b = vertices[lastPopped].p;
+                tr.c = vertices[v2].p;
+
+                if(tr.Normal().MagSquared() >= scaledEps * scaledEps) {
+                    mesh->AddTriangle(&tr);
+                }
+
+                lastPopped = v2;
+                stack.pop_back();
+            }
+
+            stack.push_back(lastPopped);
+            stack.push_back(vi);
+        }
+    }
+
+    // Process last vertex - bottom vertex connects to remaining stack
+    int vn = sorted.back();
+    while(stack.size() > 1) {
+        int v1 = stack.back(); stack.pop_back();
+        int v2 = stack.back();
+
+        STriangle tr = {};
+        tr.a = vertices[vn].p;
+        tr.b = vertices[v1].p;
+        tr.c = vertices[v2].p;
+
+        if(tr.Normal().MagSquared() >= scaledEps * scaledEps) {
+            mesh->AddTriangle(&tr);
+        }
+    }
+}
+
+// Diagonal to be added during monotone decomposition
+struct Diagonal {
+    int v1, v2;
+};
+
+// Find the edge immediately to the left of vertex vi at its y-coordinate
+// Returns the index in the edges list, or -1 if none found
+int FindEdgeToLeft(int vi, const std::vector<MonotoneVertex> &vertices,
+                   const std::vector<std::pair<SweepEdge, int>> &activeEdges) {
+    double y = vertices[vi].p.y;
+    double x = vertices[vi].p.x;
+
+    int bestIdx = -1;
+    double bestX = -1e30;
+
+    for(size_t i = 0; i < activeEdges.size(); i++) {
+        double edgeX = activeEdges[i].first.XAtY(y, vertices);
+        if(edgeX < x - LENGTH_EPS && edgeX > bestX) {
+            bestX = edgeX;
+            bestIdx = (int)i;
+        }
+    }
+    return bestIdx;
+}
+
+// Decompose polygon into monotone pieces using sweep line algorithm
+// Returns list of diagonals to add
+std::vector<Diagonal> DecomposeIntoMonotone(std::vector<MonotoneVertex> &vertices) {
+    std::vector<Diagonal> diagonals;
+    int n = (int)vertices.size();
+    if(n < 4) return diagonals;
+
+    // Sort vertices by y-coordinate (descending), then x (ascending)
+    std::vector<int> sortedVertices(n);
+    for(int i = 0; i < n; i++) sortedVertices[i] = i;
+
+    std::sort(sortedVertices.begin(), sortedVertices.end(),
+              [&vertices](int a, int b) {
+                  const Vector &pa = vertices[a].p;
+                  const Vector &pb = vertices[b].p;
+                  if(fabs(pa.y - pb.y) > LENGTH_EPS) return pa.y > pb.y;
+                  return pa.x < pb.x;
+              });
+
+    // Active edges: pair of (edge, original index for identification)
+    // Each edge stores its helper vertex
+    std::vector<std::pair<SweepEdge, int>> activeEdges;
+
+    // Process vertices in sweep order
+    for(int vi : sortedVertices) {
+        MonotoneVertex &v = vertices[vi];
+        int prevIdx = v.prev;
+        int nextIdx = v.next;
+
+        switch(v.type) {
+            case MonotoneVertexType::START: {
+                // Insert edge vi->next into active edges
+                SweepEdge edge;
+                edge.upperVertex = vi;
+                edge.lowerVertex = nextIdx;
+                edge.helper = vi;
+                activeEdges.push_back({edge, vi});
+                break;
+            }
+
+            case MonotoneVertexType::END: {
+                // Find and remove edge prev->vi
+                // If helper of that edge is a merge vertex, add diagonal
+                for(auto it = activeEdges.begin(); it != activeEdges.end(); ++it) {
+                    if(it->second == prevIdx) {
+                        int helper = it->first.helper;
+                        if(vertices[helper].type == MonotoneVertexType::MERGE) {
+                            diagonals.push_back({vi, helper});
+                        }
+                        activeEdges.erase(it);
+                        break;
+                    }
+                }
+                break;
+            }
+
+            case MonotoneVertexType::SPLIT: {
+                // Find edge directly to the left
+                int leftIdx = FindEdgeToLeft(vi, vertices, activeEdges);
+                if(leftIdx >= 0) {
+                    // Add diagonal from vi to helper of left edge
+                    int helper = activeEdges[leftIdx].first.helper;
+                    diagonals.push_back({vi, helper});
+                    // Update helper of left edge
+                    activeEdges[leftIdx].first.helper = vi;
+                }
+                // Insert edge vi->next
+                SweepEdge edge;
+                edge.upperVertex = vi;
+                edge.lowerVertex = nextIdx;
+                edge.helper = vi;
+                activeEdges.push_back({edge, vi});
+                break;
+            }
+
+            case MonotoneVertexType::MERGE: {
+                // Handle edge prev->vi (ending at vi)
+                for(auto it = activeEdges.begin(); it != activeEdges.end(); ++it) {
+                    if(it->second == prevIdx) {
+                        int helper = it->first.helper;
+                        if(vertices[helper].type == MonotoneVertexType::MERGE) {
+                            diagonals.push_back({vi, helper});
+                        }
+                        activeEdges.erase(it);
+                        break;
+                    }
+                }
+                // Find edge to the left and update its helper
+                int leftIdx = FindEdgeToLeft(vi, vertices, activeEdges);
+                if(leftIdx >= 0) {
+                    int helper = activeEdges[leftIdx].first.helper;
+                    if(vertices[helper].type == MonotoneVertexType::MERGE) {
+                        diagonals.push_back({vi, helper});
+                    }
+                    activeEdges[leftIdx].first.helper = vi;
+                }
+                break;
+            }
+
+            case MonotoneVertexType::REGULAR_LEFT: {
+                // Polygon interior is to the right
+                // Remove edge prev->vi, add edge vi->next
+                for(auto it = activeEdges.begin(); it != activeEdges.end(); ++it) {
+                    if(it->second == prevIdx) {
+                        int helper = it->first.helper;
+                        if(vertices[helper].type == MonotoneVertexType::MERGE) {
+                            diagonals.push_back({vi, helper});
+                        }
+                        activeEdges.erase(it);
+                        break;
+                    }
+                }
+                SweepEdge edge;
+                edge.upperVertex = vi;
+                edge.lowerVertex = nextIdx;
+                edge.helper = vi;
+                activeEdges.push_back({edge, vi});
+                break;
+            }
+
+            case MonotoneVertexType::REGULAR_RIGHT: {
+                // Polygon interior is to the left
+                // Just update helper of edge to the left
+                int leftIdx = FindEdgeToLeft(vi, vertices, activeEdges);
+                if(leftIdx >= 0) {
+                    int helper = activeEdges[leftIdx].first.helper;
+                    if(vertices[helper].type == MonotoneVertexType::MERGE) {
+                        diagonals.push_back({vi, helper});
+                    }
+                    activeEdges[leftIdx].first.helper = vi;
+                }
+                break;
+            }
+        }
+    }
+
+    return diagonals;
+}
+
+// Split polygon by a single diagonal into two sub-polygons
+void SplitPolygonByDiagonal(const std::vector<int> &polygon,
+                             const std::vector<MonotoneVertex> &vertices,
+                             int d1, int d2,
+                             std::vector<int> &poly1, std::vector<int> &poly2) {
+    int n = (int)polygon.size();
+
+    // Find positions of d1 and d2 in the polygon
+    int pos1 = -1, pos2 = -1;
+    for(int i = 0; i < n; i++) {
+        if(polygon[i] == d1) pos1 = i;
+        if(polygon[i] == d2) pos2 = i;
+    }
+
+    if(pos1 == -1 || pos2 == -1) return;
+
+    // Ensure pos1 < pos2
+    if(pos1 > pos2) std::swap(pos1, pos2);
+
+    // First polygon: from pos1 to pos2 (inclusive)
+    for(int i = pos1; i <= pos2; i++) {
+        poly1.push_back(polygon[i]);
+    }
+
+    // Second polygon: from pos2 to pos1 (wrapping)
+    for(int i = pos2; i != pos1; i = (i + 1) % n) {
+        poly2.push_back(polygon[i]);
+    }
+    poly2.push_back(polygon[pos1]);
+}
+
+// Recursively triangulate polygon using diagonals
+void TriangulateWithDiagonals(const std::vector<int> &polygon,
+                               const std::vector<MonotoneVertex> &vertices,
+                               const std::vector<Diagonal> &diagonals,
+                               size_t diagIdx,
+                               SMesh *mesh, double scaledEps) {
+    if(polygon.size() < 3) return;
+
+    // Check if polygon is monotone (has no split/merge vertices)
+    bool isMonotone = true;
+    for(int vi : polygon) {
+        if(vertices[vi].type == MonotoneVertexType::SPLIT ||
+           vertices[vi].type == MonotoneVertexType::MERGE) {
+            isMonotone = false;
+            break;
+        }
+    }
+
+    if(isMonotone || polygon.size() <= 3) {
+        // Triangulate directly
+        TriangulateMonotonePolygon(polygon, vertices, mesh, scaledEps);
+        return;
+    }
+
+    // Find a diagonal that applies to this polygon
+    for(size_t i = diagIdx; i < diagonals.size(); i++) {
+        const Diagonal &d = diagonals[i];
+
+        // Check if both endpoints are in this polygon
+        bool hasV1 = false, hasV2 = false;
+        for(int vi : polygon) {
+            if(vi == d.v1) hasV1 = true;
+            if(vi == d.v2) hasV2 = true;
+        }
+
+        if(hasV1 && hasV2) {
+            // Split by this diagonal
+            std::vector<int> poly1, poly2;
+            SplitPolygonByDiagonal(polygon, vertices, d.v1, d.v2, poly1, poly2);
+
+            // Recursively triangulate both sub-polygons
+            TriangulateWithDiagonals(poly1, vertices, diagonals, i + 1, mesh, scaledEps);
+            TriangulateWithDiagonals(poly2, vertices, diagonals, i + 1, mesh, scaledEps);
+            return;
+        }
+    }
+
+    // No applicable diagonal found, try to triangulate directly
+    TriangulateMonotonePolygon(polygon, vertices, mesh, scaledEps);
+}
+
+// Main monotone triangulation function
+// Returns true if successful, false if should fall back to ear-clipping
+bool MonotoneTriangulate(SContour *contour, SMesh *mesh, double scaledEps) {
+    int n = contour->l.n;
+    if(n < 3) return true;
+
+    if(n == 3) {
+        // Just add the triangle directly
+        STriangle tr = {};
+        tr.a = contour->l[0].p;
+        tr.b = contour->l[1].p;
+        tr.c = contour->l[2].p;
+        if(tr.Normal().MagSquared() >= scaledEps * scaledEps) {
+            mesh->AddTriangle(&tr);
+        }
+        return true;
+    }
+
+    // Build vertex list
+    std::vector<MonotoneVertex> vertices(n);
+    for(int i = 0; i < n; i++) {
+        vertices[i].index = i;
+        vertices[i].p = contour->l[i].p;
+        vertices[i].prev = (i - 1 + n) % n;
+        vertices[i].next = (i + 1) % n;
+    }
+
+    // Classify each vertex
+    bool hasSplitOrMerge = false;
+    for(int i = 0; i < n; i++) {
+        vertices[i].type = ClassifyVertex(vertices, i);
+        if(vertices[i].type == MonotoneVertexType::SPLIT ||
+           vertices[i].type == MonotoneVertexType::MERGE) {
+            hasSplitOrMerge = true;
+        }
+    }
+
+    // If already monotone, triangulate directly
+    if(!hasSplitOrMerge) {
+        std::vector<int> polygon(n);
+        for(int i = 0; i < n; i++) polygon[i] = i;
+        TriangulateMonotonePolygon(polygon, vertices, mesh, scaledEps);
+        return true;
+    }
+
+    // Decompose into monotone pieces using diagonals
+    std::vector<Diagonal> diagonals = DecomposeIntoMonotone(vertices);
+
+    // Build initial polygon
+    std::vector<int> polygon(n);
+    for(int i = 0; i < n; i++) polygon[i] = i;
+
+    // Recursively split and triangulate
+    TriangulateWithDiagonals(polygon, vertices, diagonals, 0, mesh, scaledEps);
+
+    return true;
+}
+
+} // anonymous namespace
 
 void SPolygon::UvTriangulateInto(SMesh *m, SSurface *srf) {
     if(l.n <= 0) return;
@@ -390,6 +947,15 @@ void SContour::UvTriangulateInto(SMesh *m, SSurface *srf) {
         l[l.n-1].tag = 1;
     }
     l.RemoveTagged();
+
+    // For planar surfaces with larger polygons, use O(n log n) monotone
+    // triangulation instead of O(n²) ear-clipping
+    if(srf->degm == 1 && srf->degn == 1 && l.n > 30) {
+        if(MonotoneTriangulate(this, m, scaledEps)) {
+            return;
+        }
+        // Fall through to ear-clipping if monotone fails
+    }
 
     // Handle simple triangle fans all at once. This pass is optional.
     if(srf->degm == 1 && srf->degn == 1) {
