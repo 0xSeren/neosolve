@@ -271,6 +271,7 @@ bool EntityBase::IsNormal() const {
         case Type::NORMAL_N_COPY:
         case Type::NORMAL_N_ROT:
         case Type::NORMAL_N_ROT_AA:
+        case Type::NORMAL_N_MIRROR:
             return true;
 
         default:           return false;
@@ -305,6 +306,22 @@ Quaternion EntityBase::NormalGetNum() const {
             break;
         }
 
+        case Type::NORMAL_N_MIRROR: {
+            // Mirror the normal about a plane
+            // The normal quaternion represents a coordinate frame (U, V, N)
+            // When mirroring, we reflect U and V about the mirror plane
+            Vector mirrorNormal = Vector::From(param[3], param[4], param[5]).WithMagnitude(1);
+            Vector u = numNormal.RotationU();
+            Vector v = numNormal.RotationV();
+            // Reflect U and V across the mirror plane: V' = V - 2*(V·N)*N
+            double du = u.Dot(mirrorNormal);
+            double dv = v.Dot(mirrorNormal);
+            u = u.Minus(mirrorNormal.ScaledBy(2 * du));
+            v = v.Minus(mirrorNormal.ScaledBy(2 * dv));
+            q = Quaternion::From(u, v);
+            break;
+        }
+
         default: ssassert(false, "Unexpected entity type");
     }
     return q;
@@ -321,6 +338,7 @@ void EntityBase::NormalForceTo(Quaternion q) {
 
         case Type::NORMAL_IN_2D:
         case Type::NORMAL_N_COPY:
+        case Type::NORMAL_N_MIRROR:
             // There's absolutely nothing to do; these are locked.
             break;
         case Type::NORMAL_N_ROT: {
@@ -499,6 +517,7 @@ void EntityBase::PointForceTo(Vector p) {
         }
 
         case Type::POINT_N_COPY:
+        case Type::POINT_N_MIRROR:
             // Nothing to do; it's a static copy
             break;
 
@@ -561,6 +580,16 @@ Vector EntityBase::PointGetNum() const {
             p = numPoint;
             break;
 
+        case Type::POINT_N_MIRROR: {
+            // Mirror point about a plane defined by origin and normal
+            Vector mirrorOrigin = Vector::From(param[0], param[1], param[2]);
+            Vector mirrorNormal = Vector::From(param[3], param[4], param[5]).WithMagnitude(1);
+            // P' = P - 2 * ((P - O) · N) * N
+            double d = (numPoint.Minus(mirrorOrigin)).Dot(mirrorNormal);
+            p = numPoint.Minus(mirrorNormal.ScaledBy(2 * d));
+            break;
+        }
+
         default: ssassert(false, "Unexpected entity type");
     }
     return p;
@@ -621,6 +650,18 @@ ExprVector EntityBase::PointGetExprs() const {
         case Type::POINT_N_COPY:
             r = ExprVector::From(numPoint);
             break;
+
+        case Type::POINT_N_MIRROR: {
+            // Mirror point about a plane defined by origin and normal
+            ExprVector orig = ExprVector::From(numPoint);
+            ExprVector mirrorOrigin = ExprVector::From(param[0], param[1], param[2]);
+            ExprVector mirrorNormal = ExprVector::From(param[3], param[4], param[5]);
+            mirrorNormal = mirrorNormal.WithMagnitude(Expr::From(1.0));
+            // P' = P - 2 * ((P - O) · N) * N
+            Expr *d = orig.Minus(mirrorOrigin).Dot(mirrorNormal);
+            r = orig.Minus(mirrorNormal.ScaledBy(d->Times(Expr::From(2.0))));
+            break;
+        }
 
         default: ssassert(false, "Unexpected entity type");
     }
@@ -768,6 +809,13 @@ Vector EntityBase::FaceGetNormalNum() const {
         r = Vector::From(numNormal.vx, numNormal.vy, numNormal.vz);
         Quaternion q = GetAxisAngleQuaternion(3);
         r = q.Rotate(r);
+    } else if(type == Type::FACE_N_MIRROR) {
+        // Mirror the face normal about a plane
+        Vector mirrorNormal = Vector::From(param[3], param[4], param[5]).WithMagnitude(1);
+        r = Vector::From(numNormal.vx, numNormal.vy, numNormal.vz);
+        // Reflect: N' = N - 2*(N·M)*M
+        double d = r.Dot(mirrorNormal);
+        r = r.Minus(mirrorNormal.ScaledBy(2 * d));
     } else ssassert(false, "Unexpected entity type");
     return r.WithMagnitude(1);
 }
@@ -806,6 +854,14 @@ ExprVector EntityBase::FaceGetPointExprs() const {
         r = r.Minus(trans);
         r = q.Rotate(r);
         r = r.Plus(trans);
+    } else if(type == Type::FACE_N_MIRROR) {
+        ExprVector mirrorOrigin = ExprVector::From(param[0], param[1], param[2]);
+        ExprVector mirrorNormal = ExprVector::From(param[3], param[4], param[5]);
+        mirrorNormal = mirrorNormal.WithMagnitude(Expr::From(1.0));
+        r = ExprVector::From(numPoint);
+        // P' = P - 2 * ((P - O) · N) * N
+        Expr *d = r.Minus(mirrorOrigin).Dot(mirrorNormal);
+        r = r.Minus(mirrorNormal.ScaledBy(d->Times(Expr::From(2.0))));
     } else ssassert(false, "Unexpected entity type");
     return r;
 }
@@ -839,6 +895,12 @@ Vector EntityBase::FaceGetPointNum() const {
         r = numPoint.Minus(trans);
         r = q.Rotate(r);
         r = r.Plus(trans);
+    } else if(type == Type::FACE_N_MIRROR) {
+        Vector mirrorOrigin = Vector::From(param[0], param[1], param[2]);
+        Vector mirrorNormal = Vector::From(param[3], param[4], param[5]).WithMagnitude(1);
+        // P' = P - 2 * ((P - O) · N) * N
+        double d = (numPoint.Minus(mirrorOrigin)).Dot(mirrorNormal);
+        r = numPoint.Minus(mirrorNormal.ScaledBy(2 * d));
     } else ssassert(false, "Unexpected entity type");
     return r;
 }

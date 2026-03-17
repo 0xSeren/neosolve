@@ -208,11 +208,18 @@ void GraphicsWindow::MakeSelected(Selection *stog) {
 
 //-----------------------------------------------------------------------------
 // Select everything that lies within the marquee view-aligned rectangle.
+// Left-to-right drag: select entities that OVERLAP the marquee (crossing selection)
+// Right-to-left drag: select only entities FULLY CONTAINED within the marquee (window selection)
 //-----------------------------------------------------------------------------
 void GraphicsWindow::SelectByMarquee() {
     Point2d marqueePoint = ProjectPoint(orig.marqueePoint);
     BBox marqueeBBox = BBox::From(Vector::From(marqueePoint.x, marqueePoint.y, VERY_NEGATIVE),
                                   Vector::From(orig.mouse.x,   orig.mouse.y,   VERY_POSITIVE));
+
+    // Determine selection mode based on drag direction
+    // Right-to-left: window selection (fully contained only)
+    // Left-to-right: crossing selection (overlapping)
+    bool windowSelection = (marqueePoint.x > orig.mouse.x);
 
     for(Entity &e : SK.entity) {
         if(e.group != SS.GW.activeGroup) continue;
@@ -221,23 +228,33 @@ void GraphicsWindow::SelectByMarquee() {
 
         bool entityHasBBox;
         BBox entityBBox = e.GetOrGenerateScreenBBox(&entityHasBBox);
-        if(entityHasBBox && entityBBox.Overlaps(marqueeBBox)) {
-            if(e.type == Entity::Type::LINE_SEGMENT) {
-                Vector p0 = SS.GW.ProjectPoint3(e.EndpointStart());
-                Vector p1 = SS.GW.ProjectPoint3(e.EndpointFinish());
-                if((!marqueeBBox.Contains({p0.x, p0.y}, 0)) &&
-                   (!marqueeBBox.Contains({p1.x, p1.y}, 0))) {
-                    // The selection marquee does not contain either of the line segment end points.
-                    // This means that either the segment is entirely outside the marquee or that
-                    // it intersects it. Check if it does...
-                    if(!Vector::BoundingBoxIntersectsLine(marqueeBBox.maxp, marqueeBBox.minp, p0,
-                                                          p1, true)) {
-                        // ... it does not so it is outside.
-                        continue;
+        if(!entityHasBBox) continue;
+
+        if(windowSelection) {
+            // Window selection: entity must be fully contained
+            if(marqueeBBox.ContainsBBox(entityBBox)) {
+                MakeSelected(e.h);
+            }
+        } else {
+            // Crossing selection: entity just needs to overlap
+            if(entityBBox.Overlaps(marqueeBBox)) {
+                if(e.type == Entity::Type::LINE_SEGMENT) {
+                    Vector p0 = SS.GW.ProjectPoint3(e.EndpointStart());
+                    Vector p1 = SS.GW.ProjectPoint3(e.EndpointFinish());
+                    if((!marqueeBBox.Contains({p0.x, p0.y}, 0)) &&
+                       (!marqueeBBox.Contains({p1.x, p1.y}, 0))) {
+                        // The selection marquee does not contain either of the line segment end points.
+                        // This means that either the segment is entirely outside the marquee or that
+                        // it intersects it. Check if it does...
+                        if(!Vector::BoundingBoxIntersectsLine(marqueeBBox.maxp, marqueeBBox.minp, p0,
+                                                              p1, true)) {
+                            // ... it does not so it is outside.
+                            continue;
+                        }
                     }
                 }
+                MakeSelected(e.h);
             }
-            MakeSelected(e.h);
         }
     }
 }

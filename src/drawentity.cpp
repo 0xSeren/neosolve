@@ -88,6 +88,7 @@ void Entity::GetReferencePoints(std::vector<Vector> *refs) {
         case Type::POINT_N_ROT_TRANS:
         case Type::POINT_N_ROT_AA:
         case Type::POINT_N_ROT_AXIS_TRANS:
+        case Type::POINT_N_MIRROR:
         case Type::POINT_IN_3D:
         case Type::POINT_IN_2D:
             refs->push_back(PointGetDrawNum());
@@ -96,6 +97,7 @@ void Entity::GetReferencePoints(std::vector<Vector> *refs) {
         case Type::NORMAL_N_COPY:
         case Type::NORMAL_N_ROT:
         case Type::NORMAL_N_ROT_AA:
+        case Type::NORMAL_N_MIRROR:
         case Type::NORMAL_IN_3D:
         case Type::NORMAL_IN_2D:
         case Type::WORKPLANE:
@@ -124,6 +126,7 @@ void Entity::GetReferencePoints(std::vector<Vector> *refs) {
         case Type::FACE_N_ROT_AA:
         case Type::FACE_ROT_NORMAL_PT:
         case Type::FACE_N_ROT_AXIS_TRANS:
+        case Type::FACE_N_MIRROR:
             break;
     }
 }
@@ -160,7 +163,15 @@ bool Entity::IsVisible() const {
 
     if(IsPoint() && !SS.GW.showPoints) return false;
     if(IsNormal() && !SS.GW.showNormals) return false;
-    if(construction && !SS.GW.showConstruction) return false;
+
+    // Datum points should always be visible when "Show points" is enabled,
+    // regardless of construction flag, since they are user-created reference points.
+    bool isDatumPoint = false;
+    if(IsPoint() && h.isFromRequest()) {
+        Request *r = SK.GetRequest(h.request());
+        isDatumPoint = (r->type == Request::Type::DATUM_POINT);
+    }
+    if(construction && !SS.GW.showConstruction && !isDatumPoint) return false;
 
     if(!SS.GW.showWorkplanes) {
         if(IsWorkplane() && !h.isFromRequest()) {
@@ -575,6 +586,7 @@ void Entity::Draw(DrawAs how, Canvas *canvas) {
         case Type::POINT_N_ROT_TRANS:
         case Type::POINT_N_ROT_AA:
         case Type::POINT_N_ROT_AXIS_TRANS:
+        case Type::POINT_N_MIRROR:
         case Type::POINT_IN_3D:
         case Type::POINT_IN_2D: {
             if(how == DrawAs::HIDDEN) return;
@@ -621,6 +633,7 @@ void Entity::Draw(DrawAs how, Canvas *canvas) {
         case Type::NORMAL_N_COPY:
         case Type::NORMAL_N_ROT:
         case Type::NORMAL_N_ROT_AA:
+        case Type::NORMAL_N_MIRROR:
         case Type::NORMAL_IN_3D:
         case Type::NORMAL_IN_2D: {
             const Camera &camera = canvas->GetCamera();
@@ -858,6 +871,7 @@ void Entity::Draw(DrawAs how, Canvas *canvas) {
         case Type::FACE_N_ROT_AA:
         case Type::FACE_ROT_NORMAL_PT:
         case Type::FACE_N_ROT_AXIS_TRANS:
+        case Type::FACE_N_MIRROR:
             // Do nothing; these are drawn with the triangle mesh
             return;
     }
