@@ -58,6 +58,21 @@ void TextWindow::ScreenToggleGroupShown(int link, uint32_t v) {
     // previously, so regenerate.
     SS.GenerateAll();
 }
+void TextWindow::ScreenToggleGroupSuppress(int link, uint32_t v) {
+    hGroup hg = { v };
+    Group *g = SK.GetGroup(hg);
+    g->suppress = !(g->suppress);
+    SS.MarkGroupDirty(hg);
+    SS.GenerateAll();
+}
+void TextWindow::ScreenToggleRefConstraints(int link, uint32_t v) {
+    SS.GW.showRefConstraints = !SS.GW.showRefConstraints;
+    SS.GW.Invalidate();
+}
+void TextWindow::ScreenToggleComments(int link, uint32_t v) {
+    SS.GW.showComments = !SS.GW.showComments;
+    SS.GW.Invalidate();
+}
 void TextWindow::ScreenShowGroupsSpecial(int link, uint32_t v) {
     for(hGroup hg : SK.groupOrder) {
         Group *g = SK.GetGroup(hg);
@@ -103,7 +118,7 @@ void TextWindow::ShowListOfGroups() {
                *checkFalse = " " CHECK_FALSE " ";
 
     Printf(true, "%Ft active");
-    Printf(false, "%Ft    shown dof group-name%E");
+    Printf(false, "%Ft    shown sup dof group-name%E");
     bool afterActive = false;
     bool backgroundParity = false;
     for(hGroup hg : SK.groupOrder) {
@@ -113,8 +128,11 @@ void TextWindow::ShowListOfGroups() {
         bool active = (g->h == SS.GW.activeGroup);
         bool shown = g->visible;
         bool ok = g->IsSolvedOkay();
+        // Don't warn about NOT_CLOSED if the group is used as a sweep path
+        bool sweepPathOk = (g->polyError.how == PolyError::NOT_CLOSED &&
+                            g->IsUsedAsSweepPath());
         bool warn = (g->type == Group::Type::DRAWING_WORKPLANE &&
-                     g->polyError.how != PolyError::GOOD) ||
+                     g->polyError.how != PolyError::GOOD && !sweepPathOk) ||
                     ((g->type == Group::Type::EXTRUDE ||
                       g->type == Group::Type::LATHE) &&
                      SK.GetGroup(g->opA)->polyError.how != PolyError::GOOD);
@@ -133,10 +151,21 @@ void TextWindow::ShowListOfGroups() {
         }
 
         bool ref = (g->h == Group::HGROUP_REFERENCES);
+        // Check if this group type supports suppress (has solid model)
+        bool canSuppress = (g->type == Group::Type::EXTRUDE ||
+                            g->type == Group::Type::LATHE ||
+                            g->type == Group::Type::REVOLVE ||
+                            g->type == Group::Type::LINKED ||
+                            g->type == Group::Type::MIRROR ||
+#ifdef HAVE_OPENCASCADE
+                            g->type == Group::Type::IMPORT_SOLID ||
+#endif
+                            g->type == Group::Type::HELIX);
         Printf(false,
                "%Bp%Fd "
                "%Ft%s%Fb%D%f%Ll%s%E "
-               "%Fb%s%D%f%Ll%s%E  "
+               "%Fb%s%D%f%Ll%s%E "
+               "%Fb%s%D%f%Ll%s%E "
                "%Fp%D%f%s%Ll%s%E "
                "%Fp%Ll%D%f%s%E%s",
                // Alternate between light and dark backgrounds, for readability
@@ -149,6 +178,10 @@ void TextWindow::ShowListOfGroups() {
                afterActive ? " - " : "",
                g->h.v, (&TextWindow::ScreenToggleGroupShown),
                afterActive ? "" : (shown ? checkTrue : checkFalse),
+               // Link that suppresses the group's solid model
+               canSuppress ? "" : "   ",
+               g->h.v, (&TextWindow::ScreenToggleGroupSuppress),
+               canSuppress ? (g->suppress ? checkTrue : checkFalse) : "",
                // Link to the errors, if a problem occurred while solving
                ok ? (warn ? 'm' : (dof > 0 ? 'i' : 's')) : 'x',
                g->h.v, (&TextWindow::ScreenHowGroupSolved),
@@ -167,6 +200,12 @@ void TextWindow::ShowListOfGroups() {
         &(TextWindow::ScreenShowGroupsSpecial),
         &(TextWindow::ScreenShowGroupsSpecial),
         &(TextWindow::ScreenShowGroupsSpecial));
+    Printf(false, "  %Fd%f%Ll%s show REF constraints%E  "
+                  "%Fd%f%Ll%s show comments%E",
+        &(TextWindow::ScreenToggleRefConstraints),
+        SS.GW.showRefConstraints ? CHECK_TRUE : CHECK_FALSE,
+        &(TextWindow::ScreenToggleComments),
+        SS.GW.showComments ? CHECK_TRUE : CHECK_FALSE);
     Printf(true,  "  %Fl%Ls%fline styles%E /"
                    " %Fl%Ls%fview%E /"
                    " %Fl%Ls%fconfiguration%E",
@@ -327,6 +366,79 @@ void TextWindow::ScreenChangeExprA(int link, uint32_t v) {
     SS.TW.edit.meaning = Edit::TIMES_REPEATED;
     SS.TW.edit.group.v = v;
 }
+void TextWindow::ScreenChangeFilletRadius(int link, uint32_t v) {
+    Group *g = SK.GetGroup(SS.TW.shown.group);
+
+    SS.TW.ShowEditControl(10, SS.MmToString(g->valA));
+    SS.TW.edit.meaning = Edit::FILLET_RADIUS;
+    SS.TW.edit.group.v = v;
+}
+void TextWindow::ScreenChangeShellFace(int link, uint32_t v) {
+    Group *g = SK.GetGroup(SS.TW.shown.group);
+
+    SS.TW.ShowEditControl(10, ssprintf("%d", (int)g->valB));
+    SS.TW.edit.meaning = Edit::SHELL_FACE;
+    SS.TW.edit.group.v = v;
+}
+void TextWindow::ScreenChangeLoftSecondProfile(int link, uint32_t v) {
+    Group *g = SK.GetGroup(SS.TW.shown.group);
+
+    // Show edit control with current group index or empty
+    std::string current = g->opB.v != 0 ?
+        ssprintf("%d", SK.GetGroup(g->opB)->order + 1) : "";
+    SS.TW.ShowEditControl(10, current);
+    SS.TW.edit.meaning = Edit::LOFT_SECOND_PROFILE;
+    SS.TW.edit.group.v = v;
+}
+void TextWindow::ScreenSelectLoftProfile(int link, uint32_t v) {
+    // v is the hGroup of the clicked profile
+    hGroup targetGroup = { v };
+    Group *g = SK.GetGroup(SS.TW.shown.group);
+
+    if(g && g->type == Group::Type::LOFT) {
+        SS.UndoRemember();
+        g->opB = targetGroup;
+        SS.MarkGroupDirty(g->h);
+        SS.ScheduleShowTW();
+    }
+}
+void TextWindow::ScreenSelectSweepPath(int link, uint32_t v) {
+    // v is the hGroup of the clicked path
+    hGroup targetGroup = { v };
+    Group *g = SK.GetGroup(SS.TW.shown.group);
+
+    if(g && g->type == Group::Type::SWEEP) {
+        SS.UndoRemember();
+        g->opB = targetGroup;
+        SS.MarkGroupDirty(g->h);
+        SS.ScheduleShowTW();
+    }
+}
+void TextWindow::ScreenChangeEdgeSelection(int link, uint32_t v) {
+    Group *g = SK.GetGroup(SS.TW.shown.group);
+
+    // Build comma-separated list of currently selected edges
+    std::string edgeList;
+    for(size_t i = 0; i < g->selectedEdges.size(); i++) {
+        if(i > 0) edgeList += ",";
+        edgeList += ssprintf("%d", g->selectedEdges[i] + 1);  // 1-based for display
+    }
+    if(edgeList.empty()) edgeList = "all";
+
+    SS.TW.ShowEditControl(20, edgeList);
+    SS.TW.edit.meaning = Edit::EDGE_SELECTION;
+    SS.TW.edit.group.v = v;
+}
+void TextWindow::ScreenSelectAllEdges(int link, uint32_t v) {
+    // No longer used - edges must be explicitly selected
+}
+void TextWindow::ScreenClearEdgeSelection(int link, uint32_t v) {
+    SS.UndoRemember();
+    Group *g = SK.GetGroup(hGroup{ v });
+    g->selectedEdges.clear();  // Empty means no edges selected
+    SS.MarkGroupDirty(g->h);
+    SS.ScheduleShowTW();
+}
 void TextWindow::ScreenChangeGroupName(int link, uint32_t v) {
     Group *g = SK.GetGroup(SS.TW.shown.group);
     SS.TW.ShowEditControl(12, g->DescriptionString().substr(5));
@@ -466,10 +578,98 @@ void TextWindow::ShowGroupInfo() {
         Printf(false, "%Bd   %Ftscaled by%E %# %Fl%Ll%f%D[change]%E",
             g->scale,
             &TextWindow::ScreenChangeGroupScale, g->h.v);
+    } else if(g->type == Group::Type::MIRROR) {
+        Printf(true, " %Ftmirror original sketch%E");
     } else if(g->type == Group::Type::DRAWING_3D) {
         Printf(true, " %Ftsketch in 3d%E");
     } else if(g->type == Group::Type::DRAWING_WORKPLANE) {
         Printf(true, " %Ftsketch in new workplane%E");
+#ifdef HAVE_OPENCASCADE
+    } else if(g->type == Group::Type::FILLET) {
+        Printf(true, " %Ftfillet edges%E");
+        Printf(false, "%Ba   %Ftradius%E %s %Fl%Ll%D%f[change]%E",
+            SS.MmToString(g->valA).c_str(),
+            g->h.v, &TextWindow::ScreenChangeFilletRadius);
+    } else if(g->type == Group::Type::CHAMFER) {
+        Printf(true, " %Ftchamfer edges%E");
+        Printf(false, "%Ba   %Ftdistance%E %s %Fl%Ll%D%f[change]%E",
+            SS.MmToString(g->valA).c_str(),
+            g->h.v, &TextWindow::ScreenChangeFilletRadius);
+    } else if(g->type == Group::Type::SHELL) {
+        Printf(true, " %Ftshell solid%E");
+        Printf(false, "%Ba   %Ftwall thickness%E %s %Fl%Ll%D%f[change]%E",
+            SS.MmToString(g->valA).c_str(),
+            g->h.v, &TextWindow::ScreenChangeFilletRadius);
+        int faceIdx = (int)g->valB;
+        Printf(false, "%Bd   %Ftopen face%E %s %Fl%Ll%D%f[change]%E",
+            faceIdx == 0 ? "auto (largest)" : ssprintf("%d", faceIdx).c_str(),
+            g->h.v, &TextWindow::ScreenChangeShellFace);
+    } else if(g->type == Group::Type::LOFT) {
+        Printf(true, " %Ftloft between profiles%E");
+        Group *srcA = SK.GetGroup(g->opA);
+        Group *srcB = g->opB.v != 0 ? SK.GetGroup(g->opB) : nullptr;
+        Printf(false, "%Ba   %Ftfirst profile%E %s",
+            srcA ? srcA->DescriptionString().c_str() : "(none)");
+        Printf(false, "%Bd   %Ftsecond profile%E %s",
+            srcB ? srcB->DescriptionString().c_str() : "(click below to select)");
+
+        // Show list of available profile groups to click
+        Printf(false, "");
+        Printf(false, "%Ft   available profiles:%E");
+        bool altRow = false;
+        for(auto &grp : SK.group) {
+            // Skip the current loft group and the first profile
+            if(grp.h.v == g->h.v || grp.h.v == g->opA.v) continue;
+            // Only show sketch groups with valid profiles
+            if(grp.type != Group::Type::DRAWING_WORKPLANE) continue;
+            if(grp.polyError.how != PolyError::GOOD) continue;
+
+            bool isSelected = (g->opB.v == grp.h.v);
+            Printf(false, "%s   %Fl%Ll%D%f%s%E%s",
+                altRow ? "%Ba" : "%Bd",
+                grp.h.v, &TextWindow::ScreenSelectLoftProfile,
+                grp.DescriptionString().c_str(),
+                isSelected ? " (selected)" : "");
+            altRow = !altRow;
+        }
+    } else if(g->type == Group::Type::SWEEP) {
+        Printf(true, " %Ftsweep profile along path%E");
+        // opA = path, opB = profile
+        Group *pathGroup = SK.GetGroup(g->opA);
+        Group *profileGroup = g->opB.v != 0 ? SK.GetGroup(g->opB) : nullptr;
+        Printf(false, "%Ba   %Ftpath%E %s",
+            pathGroup ? pathGroup->DescriptionString().c_str() : "(none)");
+        Printf(false, "%Bd   %Ftprofile%E %s",
+            profileGroup ? profileGroup->DescriptionString().c_str() : "(click below to select)");
+
+        // Show list of available profile groups to click
+        Printf(false, "");
+        Printf(false, "%Ft   available profiles:%E");
+        bool altRow = false;
+        for(auto &grp : SK.group) {
+            // Skip the current sweep group and the path
+            if(grp.h.v == g->h.v || grp.h.v == g->opA.v) continue;
+            // Only show sketch groups with valid closed profiles
+            if(grp.type != Group::Type::DRAWING_WORKPLANE) continue;
+            if(grp.polyError.how != PolyError::GOOD) continue;
+
+            bool isSelected = (g->opB.v == grp.h.v);
+            Printf(false, "%s   %Fl%Ll%D%f%s%E%s",
+                altRow ? "%Ba" : "%Bd",
+                grp.h.v, &TextWindow::ScreenSelectSweepPath,
+                grp.DescriptionString().c_str(),
+                isSelected ? " (selected)" : "");
+            altRow = !altRow;
+        }
+    } else if(g->type == Group::Type::IMPORT_SOLID) {
+        Printf(true, " %Ftimport solid from file%E");
+        Platform::Path relativePath = g->linkFile.RelativeTo(SS.saveFile.Parent());
+        if(relativePath.IsEmpty()) {
+            Printf(false, "%Ba   '%s'", g->linkFile.raw.c_str());
+        } else {
+            Printf(false, "%Ba   '%s'", relativePath.raw.c_str());
+        }
+#endif
     } else {
         Printf(true, "???");
     }
@@ -497,6 +697,9 @@ void TextWindow::ShowGroupInfo() {
 
     if(g->type == Group::Type::EXTRUDE || g->type == Group::Type::LATHE ||
        g->type == Group::Type::REVOLVE || g->type == Group::Type::LINKED ||
+#ifdef HAVE_OPENCASCADE
+       g->type == Group::Type::IMPORT_SOLID ||
+#endif
        g->type == Group::Type::HELIX) {
         bool un   = (g->meshCombine == Group::CombineAs::UNION);
         bool diff = (g->meshCombine == Group::CombineAs::DIFFERENCE);
@@ -535,6 +738,10 @@ void TextWindow::ShowGroupInfo() {
 
         if(g->type == Group::Type::EXTRUDE || g->type == Group::Type::LATHE ||
            g->type == Group::Type::REVOLVE || g->type == Group::Type::LINKED ||
+           g->type == Group::Type::MIRROR ||
+#ifdef HAVE_OPENCASCADE
+           g->type == Group::Type::IMPORT_SOLID ||
+#endif
            g->type == Group::Type::HELIX) {
             Printf(false, "   %Fd%f%LP%s  suppress this group's solid model",
                 &TextWindow::ScreenChangeGroupOption,
@@ -783,7 +990,7 @@ void TextWindow::ShowStepDimension() {
 }
 
 //-----------------------------------------------------------------------------
-// When we're creating tangent arcs (as requests, not as some parametric
+// When we're creating fillets (as requests, not as some parametric
 // thing). User gets to specify the radius, and whether the old untrimmed
 // curves are kept or deleted.
 //-----------------------------------------------------------------------------
@@ -800,7 +1007,7 @@ void TextWindow::ScreenChangeTangentArc(int link, uint32_t v) {
     }
 }
 void TextWindow::ShowTangentArc() {
-    Printf(true, "%FtTANGENT ARC PARAMETERS%E");
+    Printf(true, "%FtFILLET PARAMETERS%E");
 
     Printf(true,  "%Ft radius of created arc%E");
     if(SS.tangentArcManual) {
@@ -820,9 +1027,52 @@ void TextWindow::ShowTangentArc() {
         SS.tangentArcModify ? CHECK_TRUE : CHECK_FALSE);
 
     Printf(false, "");
-    Printf(false, "To create a tangent arc at a point,");
+    Printf(false, "To create a fillet at a point,");
     Printf(false, "select that point and then choose");
-    Printf(false, "Sketch -> Tangent Arc at Point.");
+    Printf(false, "Sketch -> Fillet at Point.");
+    Printf(true, "(or %Fl%Ll%fback to home screen%E)", &ScreenHome);
+}
+
+//-----------------------------------------------------------------------------
+// The screen that's displayed when the user chooses the chamfer at point
+// command, and no point is selected; allows setting chamfer parameters.
+//-----------------------------------------------------------------------------
+void TextWindow::ScreenChangeChamfer(int link, uint32_t v) {
+    switch(link) {
+        case 'd': {
+            SS.TW.edit.meaning = Edit::CHAMFER_DISTANCE;
+            SS.TW.ShowEditControl(3, SS.MmToString(SS.chamferDistance, true));
+            break;
+        }
+
+        case 'a': SS.chamferManual = !SS.chamferManual; break;
+        case 'm': SS.chamferModify = !SS.chamferModify; break;
+    }
+}
+void TextWindow::ShowChamfer() {
+    Printf(true, "%FtCHAMFER PARAMETERS%E");
+
+    Printf(true,  "%Ft chamfer distance from corner%E");
+    if(SS.chamferManual) {
+        Printf(false, "%Ba   %s %Fl%Ld%f[change]%E",
+            SS.MmToString(SS.chamferDistance).c_str(),
+            &(TextWindow::ScreenChangeChamfer));
+    } else {
+        Printf(false, "%Ba   automatic");
+    }
+
+    Printf(false, "");
+    Printf(false, "  %Fd%f%La%s  choose distance automatically%E",
+        &ScreenChangeChamfer,
+        !SS.chamferManual ? CHECK_TRUE : CHECK_FALSE);
+    Printf(false, "  %Fd%f%Lm%s  modify original entities%E",
+        &ScreenChangeChamfer,
+        SS.chamferModify ? CHECK_TRUE : CHECK_FALSE);
+
+    Printf(false, "");
+    Printf(false, "To create a chamfer at a point,");
+    Printf(false, "select that point and then choose");
+    Printf(false, "Sketch -> Chamfer at Point.");
     Printf(true, "(or %Fl%Ll%fback to home screen%E)", &ScreenHome);
 }
 
@@ -865,6 +1115,106 @@ void TextWindow::EditControlDone(std::string s) {
                 SS.MarkGroupDirty(g->h);
             }
             break;
+
+        case Edit::FILLET_RADIUS:
+            if(Expr *e = Expr::From(s, /*popUpError=*/true)) {
+                SS.UndoRemember();
+
+                double ev = SS.ExprToMm(e);
+                if(ev <= 0) {
+                    Error(_("Radius/distance must be positive."));
+                    break;
+                }
+
+                Group *g = SK.GetGroup(edit.group);
+                g->valA = ev;
+                SS.MarkGroupDirty(g->h);
+            }
+            break;
+
+        case Edit::SHELL_FACE:
+            if(Expr *e = Expr::From(s, /*popUpError=*/true)) {
+                SS.UndoRemember();
+
+                int ev = (int)e->Eval();
+                if(ev < 0) {
+                    Error(_("Face index must be 0 (auto) or positive."));
+                    break;
+                }
+
+                Group *g = SK.GetGroup(edit.group);
+                g->valB = ev;
+                SS.MarkGroupDirty(g->h);
+            }
+            break;
+
+        case Edit::LOFT_SECOND_PROFILE:
+            if(Expr *e = Expr::From(s, /*popUpError=*/true)) {
+                SS.UndoRemember();
+
+                int groupOrder = (int)e->Eval() - 1;  // Convert from 1-based to 0-based
+                Group *g = SK.GetGroup(edit.group);
+
+                // Find the group with this order
+                hGroup targetGroup = {};
+                for(auto &grp : SK.group) {
+                    if(grp.order == groupOrder) {
+                        targetGroup = grp.h;
+                        break;
+                    }
+                }
+
+                if(targetGroup.v == 0) {
+                    Error(_("No group found with that number."));
+                    break;
+                }
+
+                // Make sure it's a valid profile group (has bezier loops)
+                Group *target = SK.GetGroup(targetGroup);
+                if(target->polyError.how != PolyError::GOOD) {
+                    Error(_("Selected group does not have a valid profile."));
+                    break;
+                }
+
+                g->opB = targetGroup;
+                SS.MarkGroupDirty(g->h);
+            }
+            break;
+
+        case Edit::EDGE_SELECTION: {
+            SS.UndoRemember();
+            Group *g = SK.GetGroup(edit.group);
+            g->selectedEdges.clear();
+
+            // Parse comma-separated list of edge indices
+            // "all" or empty means all edges (empty vector)
+            // Numeric values are 1-based indices
+            std::string input = s;
+            if(input == "all" || input.empty()) {
+                // Empty vector = all edges
+            } else {
+                size_t pos = 0;
+                while(pos < input.length()) {
+                    // Skip whitespace and commas
+                    while(pos < input.length() && (input[pos] == ' ' || input[pos] == ',')) {
+                        pos++;
+                    }
+                    if(pos >= input.length()) break;
+
+                    // Parse number
+                    int num = 0;
+                    while(pos < input.length() && input[pos] >= '0' && input[pos] <= '9') {
+                        num = num * 10 + (input[pos] - '0');
+                        pos++;
+                    }
+                    if(num > 0) {
+                        g->selectedEdges.push_back(num - 1);  // Convert to 0-based
+                    }
+                }
+            }
+            SS.MarkGroupDirty(g->h);
+            break;
+        }
 
         case Edit::GROUP_NAME:
             if(s.empty()) {
@@ -959,6 +1309,16 @@ void TextWindow::EditControlDone(std::string s) {
                     break;
                 }
                 SS.tangentArcRadius = SS.ExprToMm(e);
+            }
+            break;
+
+        case Edit::CHAMFER_DISTANCE:
+            if(Expr *e = Expr::From(s, /*popUpError=*/true)) {
+                if(e->Eval() < LENGTH_EPS) {
+                    Error(_("Distance cannot be zero or negative."));
+                    break;
+                }
+                SS.chamferDistance = SS.ExprToMm(e);
             }
             break;
 
