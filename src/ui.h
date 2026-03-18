@@ -109,6 +109,7 @@ enum class Command : uint32_t {
     CENTER_VIEW,
     SHOW_TOOLBAR,
     SHOW_TEXT_WND,
+    DOCK_TEXT_WND,
     UNITS_INCHES,
     UNITS_FEET_INCHES,
     UNITS_MM,
@@ -146,6 +147,7 @@ enum class Command : uint32_t {
     IMAGE,
     SPLIT_CURVES,
     TANGENT_ARC,
+    CHAMFER,
     CONSTRUCTION,
     // Group
     GROUP_3D,
@@ -154,10 +156,17 @@ enum class Command : uint32_t {
     GROUP_HELIX,
     GROUP_LATHE,
     GROUP_REVOLVE,
+    GROUP_FILLET,
+    GROUP_CHAMFER,
+    GROUP_SHELL,
+    GROUP_LOFT,
+    GROUP_SWEEP,
     GROUP_ROT,
     GROUP_TRANS,
+    GROUP_MIRROR,
     GROUP_LINK,
     GROUP_RECENT,
+    GROUP_IMPORT_SOLID,
     // Constrain
     DISTANCE_DIA,
     REF_DISTANCE,
@@ -177,6 +186,7 @@ enum class Command : uint32_t {
     PERPENDICULAR,
     ORIENTED_SAME,
     WHERE_DRAGGED,
+    INEQUALITY,
     COMMENT,
     // Analyze
     VOLUME,
@@ -276,6 +286,7 @@ public:
 
     void Init();
     void MakeColorTable(const Color *in, float *out);
+    void MakeColorTableFromSettings(float *fgTable, float *bgTable);
     void Printf(bool half, const char *fmt, ...);
     void ClearScreen();
 
@@ -293,7 +304,8 @@ public:
         STYLE_INFO          = 6,
         PASTE_TRANSFORMED   = 7,
         EDIT_VIEW           = 8,
-        TANGENT_ARC         = 9
+        TANGENT_ARC         = 9,
+        CHAMFER             = 10
     };
     typedef struct {
         Screen  screen;
@@ -321,6 +333,10 @@ public:
         GROUP_SCALE           = 3,
         GROUP_COLOR           = 4,
         GROUP_OPACITY         = 5,
+        FILLET_RADIUS         = 6,
+        SHELL_FACE            = 7,
+        EDGE_SELECTION        = 8,
+        LOFT_SECOND_PROFILE   = 9,
         // For the configuration screen
         LIGHT_DIRECTION       = 100,
         LIGHT_INTENSITY       = 101,
@@ -369,6 +385,8 @@ public:
         VIEW_PROJ_UP          = 703,
         // For tangent arc
         TANGENT_ARC_RADIUS    = 800,
+        // For chamfer
+        CHAMFER_DISTANCE      = 801,
         // For helix pitch
         HELIX_PITCH           = 802
     };
@@ -415,6 +433,7 @@ public:
     void ShowPasteTransformed();
     void ShowEditView();
     void ShowTangentArc();
+    void ShowChamfer();
     // Special screen, based on selection
     void DescribeSelection();
 
@@ -435,6 +454,9 @@ public:
     static void ScreenSelectGroup(int link, uint32_t v);
     static void ScreenActivateGroup(int link, uint32_t v);
     static void ScreenToggleGroupShown(int link, uint32_t v);
+    static void ScreenToggleGroupSuppress(int link, uint32_t v);
+    static void ScreenToggleRefConstraints(int link, uint32_t v);
+    static void ScreenToggleComments(int link, uint32_t v);
     static void ScreenHowGroupSolved(int link, uint32_t v);
     static void ScreenShowGroupsSpecial(int link, uint32_t v);
     static void ScreenDeleteGroup(int link, uint32_t v);
@@ -496,6 +518,7 @@ public:
     static void ScreenStepDimGo(int link, uint32_t v);
 
     static void ScreenChangeTangentArc(int link, uint32_t v);
+    static void ScreenChangeChamfer(int link, uint32_t v);
 
     static void ScreenPasteTransformed(int link, uint32_t v);
 
@@ -503,6 +526,14 @@ public:
 
     // These ones do stuff with the edit control
     static void ScreenChangeExprA(int link, uint32_t v);
+    static void ScreenChangeFilletRadius(int link, uint32_t v);
+    static void ScreenChangeShellFace(int link, uint32_t v);
+    static void ScreenChangeLoftSecondProfile(int link, uint32_t v);
+    static void ScreenSelectLoftProfile(int link, uint32_t v);
+    static void ScreenSelectSweepPath(int link, uint32_t v);
+    static void ScreenChangeEdgeSelection(int link, uint32_t v);
+    static void ScreenSelectAllEdges(int link, uint32_t v);
+    static void ScreenClearEdgeSelection(int link, uint32_t v);
     static void ScreenChangeGroupName(int link, uint32_t v);
     static void ScreenChangeGroupScale(int link, uint32_t v);
     static void ScreenChangeHelixPitch(int link, uint32_t v);
@@ -574,6 +605,7 @@ public:
     Platform::MenuItemRef explodeMenuItem;
     Platform::MenuItemRef showToolbarMenuItem;
     Platform::MenuItemRef showTextWndMenuItem;
+    Platform::MenuItemRef dockTextWndMenuItem;
     Platform::MenuItemRef fullScreenMenuItem;
 
     Platform::MenuItemRef unitsMmMenuItem;
@@ -708,7 +740,10 @@ public:
 
     // The constraint that is being edited with the on-screen textbox.
     hConstraint constraintBeingEdited;
+    // The TTF text request being edited with the on-screen textbox.
+    hRequest requestBeingEdited;
 
+    void EditTtfText(hRequest request);
     bool SuggestLineConstraint(hRequest lineSegment, ConstraintBase::Type *type);
 
     Vector SnapToGrid(Vector p);
@@ -735,6 +770,7 @@ public:
         void ConstrainPointIfCoincident(hEntity hpt);
     };
     void MakeTangentArc();
+    void MakeChamfer();
     void SplitLinesOrCurves();
     hEntity SplitEntity(hEntity he, Vector pinter);
     hEntity SplitLine(hEntity he, Vector pinter);
@@ -836,6 +872,8 @@ public:
 
     enum class ShowConstraintMode : unsigned { SCM_NOSHOW, SCM_SHOW_ALL, SCM_SHOW_DIM };
     ShowConstraintMode showConstraints;
+    bool    showRefConstraints;
+    bool    showComments;
 
     bool    showTextWindow;
     bool    showShaded;

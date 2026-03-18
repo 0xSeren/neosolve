@@ -24,6 +24,10 @@ std::string Constraint::Label() const {
         } else {
             result = "R" + SS.MmToStringSI(valA / 2);
         }
+    } else if(type == Type::PT_PT_DISTANCE_MIN) {
+        result = "≥" + SS.MmToStringSI(fabs(valA));
+    } else if(type == Type::PT_PT_DISTANCE_MAX) {
+        result = "≤" + SS.MmToStringSI(fabs(valA));
     } else {
         // valA has units of distance
         result = SS.MmToStringSI(fabs(valA));
@@ -451,38 +455,67 @@ void Constraint::DoArcForAngle(Canvas *canvas, Canvas::hStroke hcs,
 }
 
 bool Constraint::IsVisible() const {
-    if(SS.GW.showConstraints == GraphicsWindow::ShowConstraintMode::SCM_NOSHOW) 
-        return false;
+    // Comments with custom styles are always visible (unless their style is hidden)
+    // This allows using comments as annotations that persist regardless of constraint visibility
+    bool isStyledComment = (type == Type::COMMENT && disp.style.v != 0);
+
+    // Check if this constraint type should be shown based on current mode
+    bool shouldShow = false;
     bool isDim = false;
 
-    if(SS.GW.showConstraints == GraphicsWindow::ShowConstraintMode::SCM_SHOW_DIM)
-        switch(type) {
-        case ConstraintBase::Type::ANGLE:
-        case ConstraintBase::Type::DIAMETER:
-        case ConstraintBase::Type::PT_PT_DISTANCE:
-        case ConstraintBase::Type::PT_FACE_DISTANCE:
-        case ConstraintBase::Type::PT_LINE_DISTANCE:
-        case ConstraintBase::Type::PT_PLANE_DISTANCE: isDim = true; break;
-        default:;
-        }
+    switch(SS.GW.showConstraints) {
+        case GraphicsWindow::ShowConstraintMode::SCM_NOSHOW:
+            // When constraints are hidden, only show styled comments
+            shouldShow = isStyledComment;
+            break;
 
-    if(SS.GW.showConstraints == GraphicsWindow::ShowConstraintMode::SCM_SHOW_ALL || isDim ) {
-        Group *g = SK.GetGroup(group);
-        // If the group is hidden, then the constraints are hidden and not
-        // able to be selected.
-        if(!(g->visible)) return false;
-        // And likewise if the group is not the active group; except for comments
-        // with an assigned style.
-        if(g->h != SS.GW.activeGroup && !(type == Type::COMMENT && disp.style.v)) {
-            return false;
-        }
-        if(disp.style.v) {
-            Style *s = Style::Get(disp.style);
-            if(!s->visible) return false;
-        }
-        return true;
+        case GraphicsWindow::ShowConstraintMode::SCM_SHOW_DIM:
+            // Show dimensions and styled comments
+            switch(type) {
+                case ConstraintBase::Type::ANGLE:
+                case ConstraintBase::Type::DIAMETER:
+                case ConstraintBase::Type::PT_PT_DISTANCE:
+                case ConstraintBase::Type::PT_FACE_DISTANCE:
+                case ConstraintBase::Type::PT_LINE_DISTANCE:
+                case ConstraintBase::Type::PT_PLANE_DISTANCE:
+                    isDim = true;
+                    break;
+                default:
+                    break;
+            }
+            shouldShow = isDim || isStyledComment;
+            break;
+
+        case GraphicsWindow::ShowConstraintMode::SCM_SHOW_ALL:
+            shouldShow = true;
+            break;
     }
-    return false;
+
+    if(!shouldShow) return false;
+
+    // Check independent visibility toggles for specific constraint types
+    if(type == Type::COMMENT && !isStyledComment && !SS.GW.showComments) {
+        return false;
+    }
+    if(reference && !SS.GW.showRefConstraints) {
+        return false;
+    }
+
+    Group *g = SK.GetGroup(group);
+    // If the group is hidden, then the constraints are hidden and not
+    // able to be selected.
+    if(!(g->visible)) return false;
+    // And likewise if the group is not the active group; except for comments
+    // with an assigned style.
+    if(g->h != SS.GW.activeGroup && !isStyledComment) {
+        return false;
+    }
+    // If the constraint has a custom style, check if that style is visible
+    if(disp.style.v) {
+        Style *s = Style::Get(disp.style);
+        if(!s->visible) return false;
+    }
+    return true;
 }
 
 bool Constraint::DoLineExtend(Canvas *canvas, Canvas::hStroke hcs,
@@ -548,7 +581,9 @@ void Constraint::DoLayout(DrawAs how, Canvas *canvas,
     Canvas::hFill hcf = canvas->GetFill(fill);
 
     switch(type) {
-        case Type::PT_PT_DISTANCE: {
+        case Type::PT_PT_DISTANCE:
+        case Type::PT_PT_DISTANCE_MIN:
+        case Type::PT_PT_DISTANCE_MAX: {
             Vector ap = SK.GetEntity(ptA)->PointGetNum();
             Vector bp = SK.GetEntity(ptB)->PointGetNum();
 
@@ -771,6 +806,8 @@ void Constraint::DoLayout(DrawAs how, Canvas *canvas,
 
         case Type::PT_ON_CIRCLE:
         case Type::PT_ON_LINE:
+        case Type::PT_ON_CUBIC:
+        case Type::PT_ON_SEGMENT:
         case Type::PT_ON_FACE:
         case Type::PT_IN_PLANE: {
             double s = 8/camera.scale;
@@ -795,6 +832,10 @@ void Constraint::DoLayout(DrawAs how, Canvas *canvas,
             DoLine(canvas, hcs, p.Plus (r).Minus(d), p.Minus(r).Minus(d));
             DoLine(canvas, hcs, p.Minus(r).Minus(d), p.Minus(r).Plus (d));
             DoLine(canvas, hcs, p.Minus(r).Plus (d), p.Plus (r).Plus (d));
+            // For PT_ON_SEGMENT, add a diagonal line to indicate "bounded"
+            if(type == Type::PT_ON_SEGMENT) {
+                DoLine(canvas, hcs, p.Minus(r).Minus(d), p.Plus(r).Plus(d));
+            }
             return;
         }
 
@@ -926,10 +967,26 @@ void Constraint::DoLayout(DrawAs how, Canvas *canvas,
 
         case Type::CURVE_CURVE_TANGENT:
         case Type::CUBIC_LINE_TANGENT:
-        case Type::ARC_LINE_TANGENT: {
+        case Type::ARC_LINE_TANGENT:
+        case Type::CIRCLE_LINE_TANGENT: {
             Vector textAt, u, v;
 
-            if(type == Type::ARC_LINE_TANGENT) {
+            if(type == Type::CIRCLE_LINE_TANGENT) {
+                Entity *circle = SK.GetEntity(entityA);
+                Entity *norm = SK.GetEntity(circle->normal);
+                Entity *line = SK.GetEntity(entityB);
+                Vector c = SK.GetEntity(circle->point[0])->PointGetDrawNum();
+                // Find the tangent point: closest point on line to center
+                Vector la = SK.GetEntity(line->point[0])->PointGetDrawNum();
+                Vector lb = SK.GetEntity(line->point[1])->PointGetDrawNum();
+                Vector ld = lb.Minus(la);
+                double t = (c.Minus(la)).Dot(ld) / ld.Dot(ld);
+                Vector closest = la.Plus(ld.ScaledBy(t));
+                Vector r = closest.Minus(c);
+                textAt = closest.Plus(r.WithMagnitude(14/camera.scale));
+                u = norm->NormalU();
+                v = norm->NormalV();
+            } else if(type == Type::ARC_LINE_TANGENT) {
                 Entity *arc = SK.GetEntity(entityA);
                 Entity *norm = SK.GetEntity(arc->normal);
                 Vector c = SK.GetEntity(arc->point[0])->PointGetDrawNum();
@@ -1358,6 +1415,8 @@ bool Constraint::HasLabel() const {
     switch(type) {
         case Type::COMMENT:
         case Type::PT_PT_DISTANCE:
+        case Type::PT_PT_DISTANCE_MIN:
+        case Type::PT_PT_DISTANCE_MAX:
         case Type::PT_PLANE_DISTANCE:
         case Type::PT_LINE_DISTANCE:
         case Type::PT_FACE_DISTANCE:
