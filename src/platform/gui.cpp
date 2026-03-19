@@ -44,6 +44,30 @@ std::string AcceleratorDescription(const KeyboardEvent &accel) {
                 label += toupper((char)(accel.chr & 0xff));
             }
             break;
+
+        case KeyboardEvent::Key::PAGE_UP:
+            label += "PgUp";
+            break;
+
+        case KeyboardEvent::Key::PAGE_DOWN:
+            label += "PgDn";
+            break;
+
+        case KeyboardEvent::Key::ARROW_UP:
+            label += "Up";
+            break;
+
+        case KeyboardEvent::Key::ARROW_DOWN:
+            label += "Down";
+            break;
+
+        case KeyboardEvent::Key::ARROW_LEFT:
+            label += "Left";
+            break;
+
+        case KeyboardEvent::Key::ARROW_RIGHT:
+            label += "Right";
+            break;
     }
 
     return label;
@@ -125,6 +149,12 @@ std::vector<FileFilter> Vector3dFileFilters = {
 
 std::vector<FileFilter> ImportFileFilters = {
     { CN_("file-type", "AutoCAD DXF and DWG files"), { "dxf", "dwg" } },
+};
+
+std::vector<FileFilter> SolidImportFileFilters = {
+    { CN_("file-type", "STEP files"), { "step", "stp" } },
+    { CN_("file-type", "BREP files"), { "brep", "brp" } },
+    { CN_("file-type", "IGES files"), { "iges", "igs" } },
 };
 
 std::vector<FileFilter> CsvFileFilters = {

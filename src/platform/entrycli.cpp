@@ -9,6 +9,7 @@
 
 #include "solvespace.h"
 #include "config.h"
+#include "profiler.h"
 
 using namespace SolveSpace;
 
@@ -34,6 +35,9 @@ Common options:
         For non-export commands, the unit is %%, and the default is 1.0 %%.
     -b, --bg-color <on|off>
         Whether to export the background colour in vector formats. Defaults to off.
+    -g, --group <name>
+        Selects which group to export. Can be a group name or a 1-based index.
+        If not specified, exports from the last group.
 
 Commands:
     version
@@ -57,6 +61,9 @@ Commands:
         Reloads all imported files, regenerates the sketch, and saves it.
         Note that, although this is not an export command, it uses absolute
         chord tolerance, and can be used to prepare assemblies for export.
+    profile [--output <file.json>]
+        Loads the sketch, regenerates it with profiling enabled, and outputs
+        timing information. Use --output to save JSON profiling data to a file.
 )");
 
     auto FormatListFromFileFilters = [](const std::vector<Platform::FileFilter> &filters) {
@@ -182,6 +189,46 @@ static bool RunCommand(const std::vector<std::string> args) {
         } else return false;
     };
 
+    std::string groupName;
+    auto ParseGroup = [&](size_t &argn) {
+        if(argn + 1 < args.size() && (args[argn] == "--group" ||
+                                      args[argn] == "-g")) {
+            argn++;
+            groupName = args[argn];
+            return true;
+        } else return false;
+    };
+
+    // Helper function to set active group after loading file
+    auto SetActiveGroup = [&]() -> bool {
+        if(groupName.empty()) return true;  // Use default (last group)
+
+        // Try parsing as 1-based index first
+        int groupIndex = 0;
+        if(sscanf(groupName.c_str(), "%d", &groupIndex) == 1 && groupIndex > 0) {
+            if(groupIndex <= SK.groupOrder.n) {
+                SS.GW.activeGroup = SK.groupOrder[groupIndex - 1];
+                return true;
+            } else {
+                fprintf(stderr, "Group index %d out of range (1-%d).\n",
+                        groupIndex, SK.groupOrder.n);
+                return false;
+            }
+        }
+
+        // Try finding by name
+        for(auto const &gh : SK.groupOrder) {
+            Group *g = SK.GetGroup(gh);
+            if(g->DescriptionString() == groupName) {
+                SS.GW.activeGroup = gh;
+                return true;
+            }
+        }
+
+        fprintf(stderr, "Group '%s' not found.\n", groupName.c_str());
+        return false;
+    };
+
     unsigned width = 0, height = 0;
     if(args[1] == "version") {
         fprintf(stderr, "SolveSpace version %s \n\n", PACKAGE_VERSION);
@@ -201,6 +248,7 @@ static bool RunCommand(const std::vector<std::string> args) {
                  ParseOutputPattern(argn) ||
                  ParseViewDirection(argn) ||
                  ParseChordTolerance(argn) ||
+                 ParseGroup(argn) ||
                  ParseSize(argn))) {
                 fprintf(stderr, "Unrecognized option '%s'.\n", args[argn].c_str());
                 return false;
@@ -253,6 +301,7 @@ static bool RunCommand(const std::vector<std::string> args) {
                  ParseOutputPattern(argn) ||
                  ParseViewDirection(argn) ||
                  ParseChordTolerance(argn) ||
+                 ParseGroup(argn) ||
                  ParseBgColor(argn))) {
                 fprintf(stderr, "Unrecognized option '%s'.\n", args[argn].c_str());
                 return false;
@@ -276,7 +325,8 @@ static bool RunCommand(const std::vector<std::string> args) {
         for(size_t argn = 2; argn < args.size(); argn++) {
             if(!(ParseInputFile(argn) ||
                  ParseOutputPattern(argn) ||
-                 ParseChordTolerance(argn))) {
+                 ParseChordTolerance(argn) ||
+                 ParseGroup(argn))) {
                 fprintf(stderr, "Unrecognized option '%s'.\n", args[argn].c_str());
                 return false;
             }
@@ -291,7 +341,8 @@ static bool RunCommand(const std::vector<std::string> args) {
         for(size_t argn = 2; argn < args.size(); argn++) {
             if(!(ParseInputFile(argn) ||
                  ParseOutputPattern(argn) ||
-                 ParseChordTolerance(argn))) {
+                 ParseChordTolerance(argn) ||
+                 ParseGroup(argn))) {
                 fprintf(stderr, "Unrecognized option '%s'.\n", args[argn].c_str());
                 return false;
             }
@@ -305,7 +356,8 @@ static bool RunCommand(const std::vector<std::string> args) {
     } else if(args[1] == "export-surfaces") {
         for(size_t argn = 2; argn < args.size(); argn++) {
             if(!(ParseInputFile(argn) ||
-                 ParseOutputPattern(argn))) {
+                 ParseOutputPattern(argn) ||
+                 ParseGroup(argn))) {
                 fprintf(stderr, "Unrecognized option '%s'.\n", args[argn].c_str());
                 return false;
             }
@@ -332,6 +384,53 @@ static bool RunCommand(const std::vector<std::string> args) {
 
             SS.SaveToFile(output);
         };
+    } else if(args[1] == "profile") {
+        std::string profileOutput;
+
+        for(size_t argn = 2; argn < args.size(); argn++) {
+            if(argn + 1 < args.size() && (args[argn] == "--output" ||
+                                          args[argn] == "-o")) {
+                argn++;
+                profileOutput = args[argn];
+            } else if(!ParseInputFile(argn)) {
+                fprintf(stderr, "Unrecognized option '%s'.\n", args[argn].c_str());
+                return false;
+            }
+        }
+
+        if(inputFiles.empty()) {
+            fprintf(stderr, "At least one input file must be specified.\n");
+            return false;
+        }
+
+        for(const Platform::Path &inputFile : inputFiles) {
+            Platform::Path absInputFile = inputFile.Expand(/*fromCurrentDirectory=*/true);
+
+            SS.Init();
+            Profiler::SetEnabled(true);
+
+            if(!SS.LoadFromFile(absInputFile)) {
+                fprintf(stderr, "Cannot load '%s'!\n", inputFile.raw.c_str());
+                Profiler::SetEnabled(false);
+                return false;
+            }
+
+            fprintf(stdout, "\n=== Profiling: %s ===\n", inputFile.raw.c_str());
+
+            SS.AfterNewFile();
+
+            Profiler::Report();
+
+            if(!profileOutput.empty()) {
+                Profiler::ReportToFile(profileOutput);
+            }
+
+            Profiler::SetEnabled(false);
+            SK.Clear();
+            SS.Clear();
+        }
+
+        return true;
     } else {
         fprintf(stderr, "Unrecognized command '%s'.\n", args[1].c_str());
         return false;
@@ -373,6 +472,9 @@ static bool RunCommand(const std::vector<std::string> args) {
             return false;
         }
         SS.AfterNewFile();
+        if(!SetActiveGroup()) {
+            return false;
+        }
         runner(absOutputFile);
         SK.Clear();
         SS.Clear();

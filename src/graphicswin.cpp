@@ -105,6 +105,7 @@ const MenuEntry Menu[] = {
 { 1,  NULL,                             Command::NONE,             0,       KN, NULL   },
 { 1, N_("Show &Toolbar"),               Command::SHOW_TOOLBAR,     C|'\t',  KC, mView  },
 { 1, N_("Show Property Bro&wser"),      Command::SHOW_TEXT_WND,    '\t',    KC, mView  },
+{ 1, N_("&Dock Property Browser"),      Command::DOCK_TEXT_WND,    0,       KC, mView  },
 { 1,  NULL,                             Command::NONE,             0,       KN, NULL   },
 { 1, N_("&Full Screen"),                Command::FULL_SCREEN,      C|F|11,  KC, mView  },
 
@@ -114,14 +115,26 @@ const MenuEntry Menu[] = {
 { 1, NULL,                              Command::NONE,             0,       KN, NULL   },
 { 1, N_("Step &Translating"),           Command::GROUP_TRANS,      S|'t',   KN, mGrp   },
 { 1, N_("Step &Rotating"),              Command::GROUP_ROT,        S|'r',   KN, mGrp   },
+{ 1, N_("&Mirror"),                     Command::GROUP_MIRROR,     S|'y',   KN, mGrp   },
 { 1, NULL,                              Command::NONE,             0,       KN, NULL   },
 { 1, N_("E&xtrude"),                    Command::GROUP_EXTRUDE,    S|'x',   KN, mGrp   },
 { 1, N_("&Helix"),                      Command::GROUP_HELIX,      S|'h',   KN, mGrp   },
 { 1, N_("&Lathe"),                      Command::GROUP_LATHE,      S|'l',   KN, mGrp   },
 { 1, N_("Re&volve"),                    Command::GROUP_REVOLVE,    S|'v',   KN, mGrp   },
 { 1, NULL,                              Command::NONE,             0,       KN, NULL   },
+#ifdef HAVE_OPENCASCADE
+{ 1, N_("&Fillet"),                     Command::GROUP_FILLET,     S|'f',   KN, mGrp   },
+{ 1, N_("C&hamfer"),                    Command::GROUP_CHAMFER,    0,       KN, mGrp   },
+{ 1, N_("&Shell"),                      Command::GROUP_SHELL,      0,       KN, mGrp   },
+{ 1, N_("&Loft"),                       Command::GROUP_LOFT,       0,       KN, mGrp   },
+{ 1, N_("S&weep"),                      Command::GROUP_SWEEP,      0,       KN, mGrp   },
+{ 1, NULL,                              Command::NONE,             0,       KN, NULL   },
+#endif
 { 1, N_("Link / Assemble..."),          Command::GROUP_LINK,       S|'i',   KN, mGrp   },
 { 1, N_("Link Recent"),                 Command::GROUP_RECENT,     0,       KN, mGrp   },
+#ifdef HAVE_OPENCASCADE
+{ 1, N_("Import STEP/BREP/IGES..."),    Command::GROUP_IMPORT_SOLID, 0,     KN, mGrp   },
+#endif
 
 { 0, N_("&Sketch"),                     Command::NONE,             0,       KN, mReq   },
 { 1, N_("In &Workplane"),               Command::SEL_WORKPLANE,    '2',     KR, mReq   },
@@ -141,7 +154,8 @@ const MenuEntry Menu[] = {
 { 1, N_("I&mage"),                      Command::IMAGE,            0,       KN, mReq   },
 { 1, NULL,                              Command::NONE,             0,       KN, NULL   },
 { 1, N_("To&ggle Construction"),        Command::CONSTRUCTION,     'g',     KN, mReq   },
-{ 1, N_("Ta&ngent Arc at Point"),       Command::TANGENT_ARC,      S|'a',   KN, mReq   },
+{ 1, N_("&Fillet at Point"),            Command::TANGENT_ARC,      S|'a',   KN, mReq   },
+{ 1, N_("Cha&mfer at Point"),           Command::CHAMFER,          S|'m',   KN, mReq   },
 { 1, N_("Split Curves at &Intersection"), Command::SPLIT_CURVES,   'i',     KN, mReq   },
 
 { 0, N_("&Constrain"),                  Command::NONE,             0,       KN, mCon   },
@@ -165,6 +179,7 @@ const MenuEntry Menu[] = {
 { 1, N_("&Perpendicular"),              Command::PERPENDICULAR,    '[',     KN, mCon   },
 { 1, N_("Same Orient&ation"),           Command::ORIENTED_SAME,    'x',     KN, mCon   },
 { 1, N_("Lock Point Where &Dragged"),   Command::WHERE_DRAGGED,    ']',     KN, mCon   },
+{ 1, N_("&Inequality (Min/Max)"),       Command::INEQUALITY,       'i',     KN, mCon   },
 { 1, NULL,                              Command::NONE,             0,       KN, NULL   },
 { 1, N_("Comment"),                     Command::COMMENT,          ';',     KN, mCon   },
 
@@ -254,6 +269,93 @@ bool GraphicsWindow::KeyboardEvent(Platform::KeyboardEvent event) {
             MenuView(Command::ZOOM_IN);
             return true;
         }
+    } else if(event.key == KeyboardEvent::Key::PAGE_UP) {
+        // Navigate to previous group
+        Group *prev = SK.GetGroup(activeGroup)->PreviousGroup();
+        if(prev) {
+            activeGroup = prev->h;
+            prev->Activate();
+            SS.ScheduleShowTW();
+        }
+        return true;
+    } else if(event.key == KeyboardEvent::Key::PAGE_DOWN) {
+        // Navigate to next group
+        bool foundCurrent = false;
+        for(auto const &gh : SK.groupOrder) {
+            if(foundCurrent) {
+                activeGroup = gh;
+                SK.GetGroup(gh)->Activate();
+                SS.ScheduleShowTW();
+                break;
+            }
+            if(gh == activeGroup) {
+                foundCurrent = true;
+            }
+        }
+        return true;
+    } else if(event.key == KeyboardEvent::Key::ARROW_UP ||
+              event.key == KeyboardEvent::Key::ARROW_DOWN ||
+              event.key == KeyboardEvent::Key::ARROW_LEFT ||
+              event.key == KeyboardEvent::Key::ARROW_RIGHT) {
+        // Nudge selected entities with arrow keys
+        if(selection.n > 0) {
+            // Determine nudge direction in screen coordinates
+            Vector nudgeDir = Vector::From(0, 0, 0);
+            if(event.key == KeyboardEvent::Key::ARROW_UP) {
+                nudgeDir = projUp;
+            } else if(event.key == KeyboardEvent::Key::ARROW_DOWN) {
+                nudgeDir = projUp.ScaledBy(-1);
+            } else if(event.key == KeyboardEvent::Key::ARROW_LEFT) {
+                nudgeDir = projRight.ScaledBy(-1);
+            } else if(event.key == KeyboardEvent::Key::ARROW_RIGHT) {
+                nudgeDir = projRight;
+            }
+
+            // Nudge amount: use grid spacing if visible, otherwise a fixed pixel amount
+            double nudgeAmount;
+            if(showSnapGrid) {
+                nudgeAmount = SS.gridSpacing;
+            } else {
+                // Nudge by ~5 pixels worth in world coordinates
+                nudgeAmount = 5.0 / scale;
+            }
+            nudgeDir = nudgeDir.WithMagnitude(nudgeAmount);
+
+            // Collect all points to move
+            List<hEntity> points = {};
+            for(int i = 0; i < selection.n; i++) {
+                Selection *s = &(selection[i]);
+                if(s->entity.v) {
+                    Entity *e = SK.entity.FindById(s->entity);
+                    if(e->IsPoint()) {
+                        points.Add(&(e->h));
+                    } else {
+                        // For non-point entities, add all their points
+                        int pts;
+                        if(EntReqTable::GetEntityInfo(e->type, e->extraPoints,
+                            NULL, &pts, NULL, NULL)) {
+                            for(int j = 0; j < pts; j++) {
+                                points.Add(&(e->point[j]));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Move all collected points
+            for(hEntity *he = points.First(); he; he = points.NextAfter(he)) {
+                Entity *p = SK.GetEntity(*he);
+                Vector pos = p->PointGetNum();
+                pos = pos.Plus(nudgeDir);
+                p->PointForceTo(pos);
+                SS.MarkGroupDirtyByEntity(*he);
+            }
+            points.Clear();
+
+            SS.ScheduleShowTW();
+            Invalidate();
+            return true;
+        }
     }
 
     // On some platforms, the OS does not handle some or all keyboard accelerators,
@@ -328,6 +430,8 @@ void GraphicsWindow::PopulateMainMenu() {
                 showToolbarMenuItem = menuItem;
             } else if(Menu[i].cmd == Command::SHOW_TEXT_WND) {
                 showTextWndMenuItem = menuItem;
+            } else if(Menu[i].cmd == Command::DOCK_TEXT_WND) {
+                dockTextWndMenuItem = menuItem;
             } else if(Menu[i].cmd == Command::FULL_SCREEN) {
                 fullScreenMenuItem = menuItem;
             } else if(Menu[i].cmd == Command::UNITS_MM) {
@@ -412,6 +516,8 @@ void GraphicsWindow::Init() {
     showPoints = true;
     showConstruction = true;
     showConstraints = ShowConstraintMode::SCM_SHOW_ALL;
+    showRefConstraints = true;
+    showComments = true;
     showShaded = true;
     showEdges = true;
     showMesh = false;
@@ -899,6 +1005,14 @@ void GraphicsWindow::MenuView(Command id) {
             SS.GW.EnsureValidActives();
             break;
 
+        case Command::DOCK_TEXT_WND:
+            SS.textWindowDocked = !SS.textWindowDocked;
+            SS.TW.window.reset();
+            SS.TW.canvas.reset();
+            SS.TW.Init();
+            SS.GW.EnsureValidActives();
+            break;
+
         case Command::UNITS_INCHES:
             SS.viewUnits = Unit::INCHES;
             SS.ScheduleShowTW();
@@ -1006,6 +1120,7 @@ void GraphicsWindow::EnsureValidActives() {
 
     if(SS.TW.window) SS.TW.window->SetVisible(SS.GW.showTextWindow);
     showTextWndMenuItem->SetActive(SS.GW.showTextWindow);
+    dockTextWndMenuItem->SetActive(SS.textWindowDocked);
 
     showGridMenuItem->SetActive(SS.GW.showSnapGrid);
     dimSolidModelMenuItem->SetActive(SS.GW.dimSolidModel);
@@ -1338,14 +1453,56 @@ void GraphicsWindow::MenuRequest(Command id) {
 
         case Command::TANGENT_ARC:
             SS.GW.GroupSelection();
-            if(SS.GW.gs.n == 1 && SS.GW.gs.points == 1) {
-                SS.GW.MakeTangentArc();
+            if(SS.GW.gs.n >= 1 && SS.GW.gs.points == SS.GW.gs.n) {
+                // Support variadic tangent arc - process multiple points
+                // Save all point handles first since MakeTangentArc clears selection
+                std::vector<hEntity> points;
+                for(int i = 0; i < SS.GW.gs.points; i++) {
+                    points.push_back(SS.GW.gs.point[i]);
+                }
+                SS.UndoRemember();
+                for(hEntity pt : points) {
+                    // Set up gs to have just this one point
+                    SS.GW.gs.point[0] = pt;
+                    SS.GW.gs.n = 1;
+                    SS.GW.gs.points = 1;
+                    SS.GW.MakeTangentArc();
+                }
             } else if(SS.GW.gs.n != 0) {
-                Error(_("Bad selection for tangent arc at point. Select a "
-                        "single point, or select nothing to set up arc "
+                Error(_("Bad selection for fillet at point. Select one "
+                        "or more points, or select nothing to set up fillet "
                         "parameters."));
             } else {
                 SS.TW.GoToScreen(TextWindow::Screen::TANGENT_ARC);
+                SS.GW.ForceTextWindowShown();
+                SS.ScheduleShowTW();
+                SS.GW.Invalidate(); // repaint toolbar
+            }
+            break;
+
+        case Command::CHAMFER:
+            SS.GW.GroupSelection();
+            if(SS.GW.gs.n >= 1 && SS.GW.gs.points == SS.GW.gs.n) {
+                // Support variadic chamfer - process multiple points
+                // Save all point handles first since MakeChamfer clears selection
+                std::vector<hEntity> points;
+                for(int i = 0; i < SS.GW.gs.points; i++) {
+                    points.push_back(SS.GW.gs.point[i]);
+                }
+                SS.UndoRemember();
+                for(hEntity pt : points) {
+                    // Set up gs to have just this one point
+                    SS.GW.gs.point[0] = pt;
+                    SS.GW.gs.n = 1;
+                    SS.GW.gs.points = 1;
+                    SS.GW.MakeChamfer();
+                }
+            } else if(SS.GW.gs.n != 0) {
+                Error(_("Bad selection for chamfer at point. Select one "
+                        "or more points, or select nothing to set up chamfer "
+                        "parameters."));
+            } else {
+                SS.TW.GoToScreen(TextWindow::Screen::CHAMFER);
                 SS.GW.ForceTextWindowShown();
                 SS.ScheduleShowTW();
                 SS.GW.Invalidate(); // repaint toolbar
