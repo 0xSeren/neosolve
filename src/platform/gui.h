@@ -83,6 +83,12 @@ struct KeyboardEvent {
     enum class Key {
         CHARACTER,
         FUNCTION,
+        PAGE_UP,
+        PAGE_DOWN,
+        ARROW_UP,
+        ARROW_DOWN,
+        ARROW_LEFT,
+        ARROW_RIGHT,
     };
 
     Type        type;
@@ -95,10 +101,13 @@ struct KeyboardEvent {
     bool        controlDown;
 
     bool Equals(const KeyboardEvent &other) {
-        return type == other.type && key == other.key &&
-            shiftDown == other.shiftDown && controlDown == other.controlDown &&
-            ((key == Key::CHARACTER && chr == other.chr) ||
-             (key == Key::FUNCTION && num == other.num));
+        if(type != other.type || key != other.key ||
+           shiftDown != other.shiftDown || controlDown != other.controlDown) {
+            return false;
+        }
+        if(key == Key::CHARACTER) return chr == other.chr;
+        if(key == Key::FUNCTION) return num == other.num;
+        return true;  // PAGE_UP, PAGE_DOWN have no payload
     }
 };
 
@@ -352,6 +361,8 @@ extern std::vector<FileFilter> VectorFileFilters;
 extern std::vector<FileFilter> Vector3dFileFilters;
 // Any importable format
 extern std::vector<FileFilter> ImportFileFilters;
+// CAD solid formats (STEP, BREP, IGES)
+extern std::vector<FileFilter> SolidImportFileFilters;
 // Comma-separated value, like a spreadsheet would use
 extern std::vector<FileFilter> CsvFileFilters;
 
