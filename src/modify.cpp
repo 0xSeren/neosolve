@@ -177,7 +177,8 @@ void GraphicsWindow::ParametricCurve::CreateRequestTrimmedTo(double t,
             e = SK.GetEntity(orig);
             int i = pointf ? 1 : 0;
             SK.GetEntity(e->point[i])->PointForceTo(PointAt(t));
-            ConstrainPointIfCoincident(e->point[i]);
+            // Don't call ConstrainPointIfCoincident here - the tangent constraint
+            // will handle the connection to the arc, avoiding redundant constraints.
         } else {
             hr = SS.GW.AddRequest(Request::Type::LINE_SEGMENT, /*rememberForUndo=*/false),
             e = SK.GetEntity(hr.entity(0));
@@ -196,7 +197,8 @@ void GraphicsWindow::ParametricCurve::CreateRequestTrimmedTo(double t,
             e = SK.GetEntity(orig);
             int i = pointf ? 2 : 1;
             SK.GetEntity(e->point[i])->PointForceTo(PointAt(t));
-            ConstrainPointIfCoincident(e->point[i]);
+            // Don't call ConstrainPointIfCoincident here - the tangent constraint
+            // will handle the connection to the arc, avoiding redundant constraints.
         } else {
             hr = SS.GW.AddRequest(Request::Type::ARC_OF_CIRCLE, /*rememberForUndo=*/false),
             e = SK.GetEntity(hr.entity(0));
@@ -251,7 +253,7 @@ void GraphicsWindow::ParametricCurve::ConstrainPointIfCoincident(hEntity hpt) {
 //-----------------------------------------------------------------------------
 void GraphicsWindow::MakeTangentArc() {
     if(!LockedInWorkplane()) {
-        Error(_("Must be sketching in workplane to create tangent arc."));
+        Error(_("Must be sketching in workplane to create fillet."));
         return;
     }
 
@@ -298,8 +300,8 @@ void GraphicsWindow::MakeTangentArc() {
         }
     }
     if(c != 2) {
-        Error(_("To create a tangent arc, select a point where two "
-                "non-construction lines or circles in this group and "
+        Error(_("To create a fillet, select a point where two "
+                "non-construction lines or arcs in this group and "
                 "workplane join."));
         return;
     }
@@ -385,7 +387,7 @@ void GraphicsWindow::MakeTangentArc() {
         t[0] > 0.99 || t[1] > 0.99 ||
         IsReasonable(t[0]) || IsReasonable(t[1]))
     {
-        Error(_("Couldn't round this corner. Try a smaller radius, or try "
+        Error(_("Couldn't create fillet at this corner. Try a smaller radius, or try "
                 "creating the desired geometry by hand with tangency "
                 "constraints."));
         return;
@@ -441,6 +443,213 @@ void GraphicsWindow::MakeTangentArc() {
                 hent[0], hearc, /*arcFinish=*/(b == 1), pointf[0]);
     pc[1].CreateRequestTrimmedTo(t[1], SS.tangentArcModify,
                 hent[1], hearc, /*arcFinish=*/(a == 1), pointf[1]);
+}
+
+//-----------------------------------------------------------------------------
+// Create a chamfer (straight line) at a point where two lines or arcs meet.
+// This is similar to MakeTangentArc but creates a line segment instead of an arc.
+//-----------------------------------------------------------------------------
+void GraphicsWindow::MakeChamfer() {
+    if(!LockedInWorkplane()) {
+        Error(_("Must be sketching in workplane to create chamfer."));
+        return;
+    }
+
+    // The point corresponding to the vertex to be chamfered.
+    Vector pshared = SK.GetEntity(gs.point[0])->PointGetNum();
+    ClearSelection();
+
+    // First, find two requests (that are not construction, and that are
+    // in our group and workplane) that generate entities that have an
+    // endpoint at our vertex to be chamfered.
+    int i, c = 0;
+    Entity *ent[2];
+    Request *req[2];
+    hRequest hreq[2];
+    hEntity hent[2];
+    bool pointf[2];
+    for(auto &r : SK.request) {
+        if(r.group != activeGroup)
+            continue;
+        if(r.workplane != ActiveWorkplane())
+            continue;
+        if(r.construction)
+            continue;
+        if(r.type != Request::Type::LINE_SEGMENT && r.type != Request::Type::ARC_OF_CIRCLE) {
+            continue;
+        }
+
+        Entity *e = SK.GetEntity(r.h.entity(0));
+        Vector ps = e->EndpointStart(),
+               pf = e->EndpointFinish();
+
+        if(ps.Equals(pshared) || pf.Equals(pshared)) {
+            if(c < 2) {
+                // We record the entity and request and their handles,
+                // and whether the vertex to be chamfered is the start or
+                // finish of this entity.
+                ent[c] = e;
+                hent[c] = e->h;
+                req[c] = &r;
+                hreq[c] = r.h;
+                pointf[c] = (pf.Equals(pshared));
+            }
+            c++;
+        }
+    }
+    if(c != 2) {
+        Error(_("To create a chamfer, select a point where two "
+                "non-construction lines or arcs in this group and "
+                "workplane join."));
+        return;
+    }
+
+    // Based on these two entities, we make the objects that we'll use to
+    // find the chamfer endpoints.
+    ParametricCurve pc[2];
+    pc[0].MakeFromEntity(ent[0]->h, pointf[0]);
+    pc[1].MakeFromEntity(ent[1]->h, pointf[1]);
+
+    // And thereafter we mustn't touch the entity or req ptrs,
+    // because the new requests/entities we add might force a
+    // realloc.
+    memset(ent, 0, sizeof(ent));
+    memset(req, 0, sizeof(req));
+
+    // For a chamfer, we want to walk back a fixed distance along each curve
+    // from the shared point (at t=0). We compute the parameter t such that
+    // the arc length from t=0 to t equals the chamfer distance.
+    double dist;
+    if(SS.chamferManual) {
+        dist = SS.chamferDistance;
+    } else {
+        dist = 200/scale;
+        // Limit the distance so we don't consume more than 1/3 of either curve
+        dist = min(dist, pc[0].LengthForAuto() / 3.0);
+        dist = min(dist, pc[1].LengthForAuto() / 3.0);
+    }
+
+    // Calculate the parameter t for each curve such that distance from
+    // shared point to PointAt(t) equals dist. For lines this is simple;
+    // for arcs we need to consider arc length.
+    double t[2];
+    for(int j = 0; j < 2; j++) {
+        if(pc[j].isLine) {
+            // For a line, t is proportional to distance
+            Vector tangent = pc[j].TangentAt(0);
+            t[j] = dist / tangent.Magnitude();
+        } else {
+            // For an arc, t needs to be computed from arc length
+            // Arc length = r * theta, and t maps to angle linearly
+            // The arc has parameters: center = p0, radius computed from geometry
+            // t=0 is at the start angle, t=1 is at the end angle
+            // We want arc length = dist, so theta = dist/r
+            // Then t = theta / dtheta
+            double r = (pc[j].PointAt(0).Minus(pc[j].p0)).Magnitude();
+            if(r < LENGTH_EPS) {
+                Error(_("Arc radius is too small for chamfer."));
+                return;
+            }
+            double theta = dist / r;  // angle in radians for the desired arc length
+            t[j] = theta / fabs(pc[j].dtheta);
+        }
+    }
+
+    // Check that both parameters are in valid range
+    if(t[0] < 0.01 || t[0] > 0.99 || t[1] < 0.01 || t[1] > 0.99) {
+        Error(_("Couldn't create chamfer. Try a smaller distance, or try "
+                "creating the desired geometry by hand."));
+        return;
+    }
+
+    // Compute the chamfer line endpoints
+    Vector p0 = pc[0].PointAt(t[0]),
+           p1 = pc[1].PointAt(t[1]);
+
+    SS.UndoRemember();
+
+    if (SS.chamferModify) {
+        // Delete the coincident constraint for the removed point.
+        SK.constraint.ClearTags();
+        for(i = 0; i < SK.constraint.n; i++) {
+            Constraint *cs = &(SK.constraint[i]);
+            if(cs->group != activeGroup) continue;
+            if(cs->workplane != ActiveWorkplane()) continue;
+            if(cs->type != Constraint::Type::POINTS_COINCIDENT) continue;
+            if (SK.GetEntity(cs->ptA)->PointGetNum().Equals(pshared)) {
+                cs->tag = 1;
+            }
+        }
+        SK.constraint.RemoveTagged();
+    } else {
+        // Make the original entities construction, according to user preference.
+        SK.GetRequest(hreq[0])->construction = true;
+        SK.GetRequest(hreq[1])->construction = true;
+    }
+
+    // Create the chamfer line segment
+    hRequest hreqChamfer = AddRequest(Request::Type::LINE_SEGMENT, /*rememberForUndo=*/false);
+    Entity *echamfer = SK.GetEntity(hreqChamfer.entity(0));
+
+    SK.GetEntity(echamfer->point[0])->PointForceTo(p0);
+    SK.GetEntity(echamfer->point[1])->PointForceTo(p1);
+
+    hEntity hchamferPt0 = echamfer->point[0];
+    hEntity hchamferPt1 = echamfer->point[1];
+
+    echamfer = NULL; // might become invalid after adding more entities
+
+    // Modify or duplicate the original entities and connect them to the chamfer line.
+    // For the chamfer, we don't need tangent constraints like for arc - just coincidence.
+    for(int j = 0; j < 2; j++) {
+        hEntity chamferPt = (j == 0) ? hchamferPt0 : hchamferPt1;
+
+        if(pc[j].isLine) {
+            if(SS.chamferModify) {
+                Entity *e = SK.GetEntity(hent[j]);
+                int ptIdx = pointf[j] ? 1 : 0;
+                SK.GetEntity(e->point[ptIdx])->PointForceTo(pc[j].PointAt(t[j]));
+                Constraint::ConstrainCoincident(e->point[ptIdx], chamferPt);
+            } else {
+                hRequest hr = AddRequest(Request::Type::LINE_SEGMENT, /*rememberForUndo=*/false);
+                Entity *e = SK.GetEntity(hr.entity(0));
+                SK.GetEntity(e->point[0])->PointForceTo(pc[j].PointAt(t[j]));
+                SK.GetEntity(e->point[1])->PointForceTo(pc[j].PointAt(1));
+                Constraint::ConstrainCoincident(e->point[0], chamferPt);
+                // The endpoint at t=1 should be coincident with any existing constraint
+                pc[j].ConstrainPointIfCoincident(e->point[1]);
+                // Constrain new line to be on original line
+                Constraint::Constrain(Constraint::Type::PT_ON_LINE,
+                    e->point[0], Entity::NO_ENTITY, hent[j]);
+                Constraint::Constrain(Constraint::Type::PT_ON_LINE,
+                    e->point[1], Entity::NO_ENTITY, hent[j]);
+            }
+        } else {
+            // For arcs, similar logic
+            if(SS.chamferModify) {
+                Entity *e = SK.GetEntity(hent[j]);
+                int ptIdx = pointf[j] ? 2 : 1;  // Arc endpoints are point[1] and point[2]
+                SK.GetEntity(e->point[ptIdx])->PointForceTo(pc[j].PointAt(t[j]));
+                Constraint::ConstrainCoincident(e->point[ptIdx], chamferPt);
+            } else {
+                hRequest hr = AddRequest(Request::Type::ARC_OF_CIRCLE, /*rememberForUndo=*/false);
+                Entity *e = SK.GetEntity(hr.entity(0));
+                SK.GetEntity(e->point[0])->PointForceTo(pc[j].p0);
+                if(pc[j].dtheta > 0) {
+                    SK.GetEntity(e->point[1])->PointForceTo(pc[j].PointAt(t[j]));
+                    SK.GetEntity(e->point[2])->PointForceTo(pc[j].PointAt(1));
+                    Constraint::ConstrainCoincident(e->point[1], chamferPt);
+                    pc[j].ConstrainPointIfCoincident(e->point[2]);
+                } else {
+                    SK.GetEntity(e->point[2])->PointForceTo(pc[j].PointAt(t[j]));
+                    SK.GetEntity(e->point[1])->PointForceTo(pc[j].PointAt(1));
+                    Constraint::ConstrainCoincident(e->point[2], chamferPt);
+                    pc[j].ConstrainPointIfCoincident(e->point[1]);
+                }
+                pc[j].ConstrainPointIfCoincident(e->point[0]);
+            }
+        }
+    }
 }
 
 hEntity GraphicsWindow::SplitLine(hEntity he, Vector pinter) {
