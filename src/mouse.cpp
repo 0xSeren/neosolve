@@ -659,6 +659,26 @@ void GraphicsWindow::MouseRightUp(double x, double y) {
                 menu->AddItem(_("Other Supplementary Angle"),
                     []() { Constraint::MenuConstrain(Command::OTHER_ANGLE); });
             }
+            if(c->type == Constraint::Type::PT_PT_DISTANCE_MIN) {
+                menu->AddItem(_("Change to Maximum (≤)"), [c]() {
+                    SS.UndoRemember();
+                    Constraint *cc = SK.GetConstraint(c->h);
+                    cc->type = Constraint::Type::PT_PT_DISTANCE_MAX;
+                    SS.MarkGroupDirty(cc->group);
+                    SS.ScheduleShowTW();
+                    SS.ScheduleGenerateAll();
+                });
+            }
+            if(c->type == Constraint::Type::PT_PT_DISTANCE_MAX) {
+                menu->AddItem(_("Change to Minimum (≥)"), [c]() {
+                    SS.UndoRemember();
+                    Constraint *cc = SK.GetConstraint(c->h);
+                    cc->type = Constraint::Type::PT_PT_DISTANCE_MIN;
+                    SS.MarkGroupDirty(cc->group);
+                    SS.ScheduleShowTW();
+                    SS.ScheduleGenerateAll();
+                });
+            }
         }
         if(gs.constraintLabels > 0 || gs.points > 0) {
             menu->AddItem(_("Snap to Grid"),
@@ -890,6 +910,54 @@ bool GraphicsWindow::ConstrainPointByHovered(hEntity pt, const Point2d *projecte
         }
         Constraint::Constrain(Constraint::Type::PT_ON_LINE,
             pt, Entity::NO_ENTITY, e->h);
+        return true;
+    }
+    if(e->type == Entity::Type::CUBIC) {
+        if(projected != NULL) {
+            Vector snapPos = SnapToEntityByScreenPoint(*projected, e->h);
+            point->PointForceTo(snapPos);
+        }
+
+        // Determine which segment the point is on and compute initial t
+        Constraint c = {};
+        c.group = SS.GW.activeGroup;
+        c.workplane = SS.GW.ActiveWorkplane();
+        c.type = Constraint::Type::PT_ON_CUBIC;
+        c.ptA = pt;
+        c.entityA = e->h;
+        c.valA = 0.5;  // Default: segment 0 + t=0.5
+
+        // Helper lambda to evaluate Bezier at t
+        auto evalBezier = [](Vector p0, Vector p1, Vector p2, Vector p3, double t) {
+            double omt = 1.0 - t;
+            return p0.ScaledBy(omt*omt*omt)
+                .Plus(p1.ScaledBy(3*omt*omt*t))
+                .Plus(p2.ScaledBy(3*omt*t*t))
+                .Plus(p3.ScaledBy(t*t*t));
+        };
+
+        Vector ptPos = point->PointGetNum();
+        double bestDist = 1e10;
+        double bestT = 0.5;
+        int bestSegment = 0;
+
+        // Use entity's generated Bezier curves for segment finding
+        SBezierList *sbl = e->GetOrGenerateBezierCurves();
+        int seg = 0;
+        for(const SBezier &sb : sbl->l) {
+            if(sb.deg != 3) { seg++; continue; }
+            for(int i = 0; i <= 20; i++) {
+                double t = i / 20.0;
+                Vector ptOnCurve = evalBezier(sb.ctrl[0], sb.ctrl[1], sb.ctrl[2], sb.ctrl[3], t);
+                double dist = ptPos.Minus(ptOnCurve).Magnitude();
+                if(dist < bestDist) { bestDist = dist; bestT = t; bestSegment = seg; }
+            }
+            seg++;
+        }
+
+        // Encode segment + t into valA (integer part = segment, fractional = t)
+        c.valA = bestSegment + bestT;
+        Constraint::AddConstraint(&c, /*rememberForUndo=*/false);
         return true;
     }
 
@@ -1433,12 +1501,47 @@ void GraphicsWindow::EditConstraint(hConstraint constraint) {
                         /*isMonospace=*/false, editValue);
 }
 
+void GraphicsWindow::EditTtfText(hRequest request) {
+    requestBeingEdited = request;
+    constraintBeingEdited = {};  // Clear constraint editing
+    ClearSuper();
+
+    Request *r = SK.GetRequest(request);
+    if(r->type != Request::Type::TTF_TEXT) {
+        return;
+    }
+
+    // Get the position of the TTF text entity for placing the editor
+    Entity *e = SK.GetEntity(request.entity(0));
+    Vector p3 = SK.GetEntity(e->point[0])->PointGetNum();  // Top-left point
+    Point2d p2 = ProjectPoint(p3);
+
+    std::string editValue = r->str;
+    std::string editPlaceholder = "Sample Text Here";
+
+    double width, height;
+    window->GetContentSize(&width, &height);
+    hStyle hs = r->style;
+    if(hs.v == 0) hs.v = Style::CONSTRAINT;
+    double capHeight = Style::TextHeight(hs);
+    double fontHeight = VectorFont::Builtin()->GetHeight(capHeight);
+    double editMinWidth = VectorFont::Builtin()->GetWidth(capHeight, editPlaceholder);
+    window->ShowEditor(p2.x + width / 2, height / 2 - p2.y,
+                        fontHeight, editMinWidth,
+                        /*isMonospace=*/false, editValue);
+}
+
 void GraphicsWindow::MouseLeftDoubleClick(double mx, double my) {
     if(window->IsEditorVisible()) return;
     SS.TW.HideEditControl();
 
     if(hover.constraint.v) {
         EditConstraint(hover.constraint);
+    } else if(hover.entity.v) {
+        Entity *e = SK.entity.FindByIdNoOops(hover.entity);
+        if(e && e->type == Entity::Type::TTF_TEXT && e->h.isFromRequest()) {
+            EditTtfText(e->h.request());
+        }
     }
 }
 
@@ -1446,7 +1549,21 @@ void GraphicsWindow::EditControlDone(const std::string &s) {
     window->HideEditor();
     window->Invalidate();
 
-    Constraint *c = SK.GetConstraint(constraintBeingEdited);
+    // Handle TTF text editing
+    if(requestBeingEdited.v) {
+        Request *r = SK.request.FindByIdNoOops(requestBeingEdited);
+        if(r && r->type == Request::Type::TTF_TEXT) {
+            SS.UndoRemember();
+            r->str = s;
+            SS.MarkGroupDirty(r->group);
+        }
+        requestBeingEdited = {};
+        return;
+    }
+
+    // Handle constraint editing
+    Constraint *c = SK.constraint.FindByIdNoOops(constraintBeingEdited);
+    if(!c) return;
 
     if(c->type == Constraint::Type::COMMENT) {
         SS.UndoRemember();
