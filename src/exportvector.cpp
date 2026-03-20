@@ -1138,6 +1138,9 @@ void SvgFileWriter::StartPath(RgbaColor strokeRgb, double lineWidth,
 void SvgFileWriter::FinishPath(RgbaColor strokeRgb, double lineWidth,
                                bool filled, RgbaColor fillRgb, hStyle hs)
 {
+    // Close the path with Z - all paths from SBezierLoop are closed loops
+    fprintf(f, "Z ");
+
     std::string fill;
     if(filled) {
         fill = ssprintf("fill='#%02x%02x%02x'",
@@ -1260,9 +1263,13 @@ void HpglFileWriter::FinishAndCloseFile() {
 // Routines for G Code output. Slightly complicated by our ability to generate
 // multiple passes, and to specify the feeds and depth; those parameters get
 // set in the configuration screen.
+//
+// Now supports G02/G03 arc commands for circular arcs instead of converting
+// them to linear segments.
 //-----------------------------------------------------------------------------
 void GCodeFileWriter::StartFile() {
     sel = {};
+    sbl = {};
 }
 void GCodeFileWriter::StartPath(RgbaColor strokeRgb, double lineWidth,
                                 bool filled, RgbaColor fillRgb, hStyle hs)
@@ -1278,6 +1285,10 @@ void GCodeFileWriter::Triangle(STriangle *tr) {
 }
 
 void GCodeFileWriter::Bezier(SBezier *sb) {
+    // Store the original bezier for arc detection
+    sbl.l.Add(sb);
+
+    // Also add to edge list for polygon assembly
     if(sb->deg == 1) {
         sel.AddEdge(sb->ctrl[0], sb->ctrl[1]);
     } else {
@@ -1286,36 +1297,97 @@ void GCodeFileWriter::Bezier(SBezier *sb) {
 }
 
 void GCodeFileWriter::FinishAndCloseFile() {
-    SPolygon sp = {};
-    sel.AssemblePolygon(&sp, NULL);
+    // Assemble beziers into loops for ordered traversal
+    SBezierLoopSetSet sblss = {};
+    sbl.l.ClearTags();
 
-    int i;
-    for(i = 0; i < SS.gCode.passes; i++) {
-        double depth = (SS.gCode.depth / SS.gCode.passes)*(i+1);
+    bool allClosed, allCoplanar;
+    SEdge notClosedAt = {};
+    Vector notCoplanarAt = {};
+    sblss.FindOuterFacesFrom(&sbl, NULL, NULL,
+                             SS.ChordTolMm(),
+                             &allClosed, &notClosedAt,
+                             &allCoplanar, &notCoplanarAt,
+                             NULL);
 
-        SContour *sc;
-        for(sc = sp.l.First(); sc; sc = sp.l.NextAfter(sc)) {
-            if(sc->l.n < 2) continue;
+    Vector n = Vector::From(0.0, 0.0, 1.0);  // Z axis for XY plane
 
-            SPoint *pt = sc->l.First();
-            fprintf(f, "G00 X%s Y%s\r\n",
-                    SS.MmToString(pt->p.x).c_str(), SS.MmToString(pt->p.y).c_str());
-            fprintf(f, "G01 Z%s F%s\r\n",
-                    SS.MmToString(depth).c_str(), SS.MmToString(SS.gCode.plungeFeed).c_str());
+    for(int pass = 0; pass < SS.gCode.passes; pass++) {
+        double depth = (SS.gCode.depth / SS.gCode.passes) * (pass + 1);
 
-            pt = sc->l.NextAfter(pt);
-            for(; pt; pt = sc->l.NextAfter(pt)) {
-                fprintf(f, "G01 X%s Y%s F%s\r\n",
-                        SS.MmToString(pt->p.x).c_str(), SS.MmToString(pt->p.y).c_str(),
-                        SS.MmToString(SS.gCode.feed).c_str());
+        for(SBezierLoopSet &sbls : sblss.l) {
+            for(SBezierLoop &loop : sbls.l) {
+                if(loop.l.n < 1) continue;
+
+                // Rapid move to start of loop
+                SBezier *first = loop.l.First();
+                fprintf(f, "G00 X%s Y%s\r\n",
+                        SS.MmToString(first->ctrl[0].x).c_str(),
+                        SS.MmToString(first->ctrl[0].y).c_str());
+
+                // Plunge to cutting depth
+                fprintf(f, "G01 Z%s F%s\r\n",
+                        SS.MmToString(depth).c_str(),
+                        SS.MmToString(SS.gCode.plungeFeed).c_str());
+
+                // Output each curve segment
+                for(SBezier *sb = loop.l.First(); sb; sb = loop.l.NextAfter(sb)) {
+                    Vector endPt = sb->ctrl[sb->deg];
+                    Vector center;
+                    double radius;
+
+                    if(sb->deg == 1) {
+                        // Line segment: use G01
+                        fprintf(f, "G01 X%s Y%s F%s\r\n",
+                                SS.MmToString(endPt.x).c_str(),
+                                SS.MmToString(endPt.y).c_str(),
+                                SS.MmToString(SS.gCode.feed).c_str());
+                    } else if(sb->IsInPlane(n, 0) && sb->IsCircle(n, &center, &radius)) {
+                        // Circular arc: use G02 (CW) or G03 (CCW)
+                        Vector startPt = sb->ctrl[0];
+
+                        // Calculate I,J (center offset from start point)
+                        double i = center.x - startPt.x;
+                        double j = center.y - startPt.y;
+
+                        // Determine arc direction using cross product
+                        // For XY plane: if (start-center) x (end-center) points in +Z, it's CCW
+                        Vector toStart = startPt.Minus(center);
+                        Vector toEnd = endPt.Minus(center);
+                        double cross = toStart.x * toEnd.y - toStart.y * toEnd.x;
+
+                        const char *gcode = (cross >= 0) ? "G03" : "G02";  // CCW : CW
+
+                        fprintf(f, "%s X%s Y%s I%s J%s F%s\r\n",
+                                gcode,
+                                SS.MmToString(endPt.x).c_str(),
+                                SS.MmToString(endPt.y).c_str(),
+                                SS.MmToString(i).c_str(),
+                                SS.MmToString(j).c_str(),
+                                SS.MmToString(SS.gCode.feed).c_str());
+                    } else {
+                        // Non-circular curve: convert to piecewise linear
+                        List<Vector> lv = {};
+                        sb->MakePwlInto(&lv, SS.ChordTolMm());
+                        for(int k = 1; k < lv.n; k++) {
+                            fprintf(f, "G01 X%s Y%s F%s\r\n",
+                                    SS.MmToString(lv[k].x).c_str(),
+                                    SS.MmToString(lv[k].y).c_str(),
+                                    SS.MmToString(SS.gCode.feed).c_str());
+                        }
+                        lv.Clear();
+                    }
+                }
+
+                // Move up to clearance plane
+                fprintf(f, "G00 Z%s\r\n",
+                        SS.MmToString(SS.gCode.safeHeight).c_str());
             }
-            // Move up to a clearance plane above the work.
-            fprintf(f, "G00 Z%s\r\n",
-                    SS.MmToString(SS.gCode.safeHeight).c_str());
         }
     }
 
-    sp.Clear();
+    sblss.Clear();
+    sbl.Clear();
     sel.Clear();
     fclose(f);
 }
