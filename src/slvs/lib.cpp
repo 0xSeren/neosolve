@@ -71,6 +71,9 @@ case SLVS_C_EQUAL_RADIUS:        return ConstraintBase::Type::EQUAL_RADIUS;
 case SLVS_C_PROJ_PT_DISTANCE:    return ConstraintBase::Type::PROJ_PT_DISTANCE;
 case SLVS_C_WHERE_DRAGGED:       return ConstraintBase::Type::WHERE_DRAGGED;
 case SLVS_C_CURVE_CURVE_TANGENT: return ConstraintBase::Type::CURVE_CURVE_TANGENT;
+case SLVS_C_PT_PT_DISTANCE_MIN:  return ConstraintBase::Type::PT_PT_DISTANCE_MIN;
+case SLVS_C_PT_PT_DISTANCE_MAX:  return ConstraintBase::Type::PT_PT_DISTANCE_MAX;
+case SLVS_C_PT_ON_SEGMENT:       return ConstraintBase::Type::PT_ON_SEGMENT;
 default: Platform::FatalError("bad constraint type " + std::to_string(type));
     }
 }
@@ -99,6 +102,8 @@ static bool Slvs_CanInitiallySatisfy(const ConstraintBase &c) {
         return c.workplane != EntityBase::FREE_IN_3D;
 
     case ConstraintBase::Type::PT_PT_DISTANCE:
+    case ConstraintBase::Type::PT_PT_DISTANCE_MIN:
+    case ConstraintBase::Type::PT_PT_DISTANCE_MAX:
     case ConstraintBase::Type::PROJ_PT_DISTANCE:
     case ConstraintBase::Type::PT_LINE_DISTANCE:
     case ConstraintBase::Type::PT_PLANE_DISTANCE:
@@ -124,6 +129,7 @@ static bool Slvs_CanInitiallySatisfy(const ConstraintBase &c) {
     case ConstraintBase::Type::ANGLE:
     case ConstraintBase::Type::EQUAL_ANGLE:
     case ConstraintBase::Type::ARC_LINE_TANGENT:
+    case ConstraintBase::Type::CIRCLE_LINE_TANGENT:
     case ConstraintBase::Type::CURVE_CURVE_TANGENT:
         return true;
 
@@ -133,6 +139,8 @@ static bool Slvs_CanInitiallySatisfy(const ConstraintBase &c) {
 
     case ConstraintBase::Type::POINTS_COINCIDENT:
     case ConstraintBase::Type::PT_ON_LINE:
+    case ConstraintBase::Type::PT_ON_SEGMENT:
+    case ConstraintBase::Type::PT_ON_CUBIC:
     case ConstraintBase::Type::SYMMETRIC:
     case ConstraintBase::Type::SYMMETRIC_HORIZ:
     case ConstraintBase::Type::SYMMETRIC_VERT:
