@@ -12,10 +12,13 @@ uniform mat4 projection;
 
 varying vec3 fragNormal;
 varying vec4 fragColor;
+varying vec3 fragPosition;
 
 void main() {
+    vec4 viewPos = modelview * vec4(pos, 1.0);
     fragNormal = vec3(modelview * vec4(nor, 0.0));
     fragColor = col;
+    fragPosition = viewPos.xyz;
 
-    gl_Position =  projection * modelview * vec4(pos, 1.0);
+    gl_Position = projection * viewPos;
 }
