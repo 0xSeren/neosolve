@@ -38,8 +38,11 @@ bool ConstraintBase::IsProjectible() const {
     switch(type) {
         case Type::POINTS_COINCIDENT:
         case Type::PT_PT_DISTANCE:
+        case Type::PT_PT_DISTANCE_MIN:
+        case Type::PT_PT_DISTANCE_MAX:
         case Type::PT_LINE_DISTANCE:
         case Type::PT_ON_LINE:
+        case Type::PT_ON_SEGMENT:
         case Type::EQUAL_LENGTH_LINES:
         case Type::EQ_LEN_PT_LINE_D:
         case Type::EQ_PT_LN_DISTANCES:
@@ -72,10 +75,12 @@ bool ConstraintBase::IsProjectible() const {
         case Type::EQUAL_LINE_ARC_LEN:
         case Type::DIAMETER:
         case Type::PT_ON_CIRCLE:
+        case Type::PT_ON_CUBIC:
         case Type::SAME_ORIENTATION:
         case Type::CUBIC_LINE_TANGENT:
         case Type::CURVE_CURVE_TANGENT:
         case Type::ARC_LINE_TANGENT:
+        case Type::CIRCLE_LINE_TANGENT:
         case Type::EQUAL_RADIUS:
             return false;
     }
@@ -216,6 +221,35 @@ void ConstraintBase::ModifyToSatisfy() {
         ExprVector exb = eb->PointGetExprsInWorkplane(workplane);
         ExprVector exba = exb.Minus(exa);
         SK.GetParam(valP)->val = exba.Dot(exp.Minus(exa))->Eval() / exba.Dot(exba)->Eval();
+    } else if(type == Type::PT_PT_DISTANCE_MIN || type == Type::PT_PT_DISTANCE_MAX) {
+        // For inequality constraints, set valA to a reasonable bound
+        double d = Distance(workplane, ptA, ptB)->Eval();
+        // Set valA to 80% of current distance for MIN, 120% for MAX
+        // This gives the user room to move in both directions initially
+        if(type == Type::PT_PT_DISTANCE_MIN) {
+            valA = d * 0.8;
+        } else {
+            valA = d * 1.2;
+        }
+        // Initialize slack so constraint is satisfied: slack² = |d - valA|
+        if(valP.v != 0 && SK.param.FindByIdNoOops(valP)) {
+            double diff = (type == Type::PT_PT_DISTANCE_MIN) ? (d - valA) : (valA - d);
+            SK.GetParam(valP)->val = sqrt(fabs(diff));
+        }
+    } else if(type == Type::PT_ON_SEGMENT) {
+        // Initialize t for point on segment (same as PT_ON_LINE)
+        if(valP.v != 0 && SK.param.FindByIdNoOops(valP)) {
+            EntityBase *ln = SK.GetEntity(entityA);
+            EntityBase *ea = SK.GetEntity(ln->point[0]);
+            EntityBase *eb = SK.GetEntity(ln->point[1]);
+            EntityBase *ep = SK.GetEntity(ptA);
+            ExprVector exp = ep->PointGetExprsInWorkplane(workplane);
+            ExprVector exa = ea->PointGetExprsInWorkplane(workplane);
+            ExprVector exb = eb->PointGetExprsInWorkplane(workplane);
+            ExprVector exba = exb.Minus(exa);
+            double t = exba.Dot(exp.Minus(exa))->Eval() / exba.Dot(exba)->Eval();
+            SK.GetParam(valP)->val = t;
+        }
     } else {
         // We'll fix these ones up by looking at their symbolic equation;
         // that means no extra work.
@@ -256,11 +290,62 @@ void ConstraintBase::Generate(ParamList *l) {
             // Add new parameter only when we operate in 3d space
             if(workplane != EntityBase::FREE_IN_3D) break;
             // fallthrough
-        case Type::SAME_ORIENTATION:
+        case Type::SAME_ORIENTATION: {
+            Param p = {};
+            valP = h.param(0);
+            p.h = valP;
+            l->Add(&p);
+            break;
+        }
+
         case Type::PT_ON_LINE: {
             Param p = {};
             valP = h.param(0);
             p.h = valP;
+            l->Add(&p);
+            break;
+        }
+
+        case Type::PT_PT_DISTANCE_MIN:
+        case Type::PT_PT_DISTANCE_MAX: {
+            // For inequality constraints, valP is the slack variable
+            // slack² = |d - valA|, so we need to initialize slack properly
+            Param p = {};
+            valP = h.param(0);
+            p.h = valP;
+            // Initialize slack based on current distance and valA
+            double d = Distance(workplane, ptA, ptB)->Eval();
+            double diff = (type == Type::PT_PT_DISTANCE_MIN) ? (d - valA) : (valA - d);
+            p.val = (diff > 0) ? sqrt(diff) : 0.1;  // Small non-zero default if at boundary
+            l->Add(&p);
+            break;
+        }
+
+        case Type::PT_ON_SEGMENT: {
+            // Same as PT_ON_LINE - uses single t parameter
+            // Note: bounded constraint not feasible due to solver limitations
+            Param p = {};
+            valP = h.param(0);
+            p.h = valP;
+            l->Add(&p);
+            break;
+        }
+
+        case Type::PT_ON_CUBIC: {
+            // Parameter t for position along cubic Bezier curve
+            // valA encodes: integer part = segment index, fractional part = initial t within segment
+            // For single-segment (ep=0): t ∈ [0, 1], for multi-segment: t ∈ [0, numSegments]
+            // Range clamping is done in GenerateEquations where entity info is available
+            Param p = {};
+            valP = h.param(0);
+            p.h = valP;
+            // Use valA directly - it's already encoded as segment + localT by mouse.cpp
+            // Clamp fractional part to avoid exact 0 or 1 which can cause solver issues
+            double initT = valA;
+            double frac = initT - floor(initT);
+            if(frac < 0.001) initT = floor(initT) + 0.001;
+            if(frac > 0.999) initT = floor(initT) + 0.999;
+            p.val = initT;
             l->Add(&p);
             break;
         }
@@ -279,6 +364,22 @@ void ConstraintBase::GenerateEquations(IdList<Equation,hEquation> *l,
         case Type::PT_PT_DISTANCE:
             AddEq(l, Distance(workplane, ptA, ptB)->Minus(exA), 0);
             return;
+
+        case Type::PT_PT_DISTANCE_MIN: {
+            // d >= valA: equation is d - valA - slack² = 0
+            Expr *d = Distance(workplane, ptA, ptB);
+            Expr *slack = Expr::From(valP);
+            AddEq(l, d->Minus(exA)->Minus(slack->Square()), 0);
+            return;
+        }
+
+        case Type::PT_PT_DISTANCE_MAX: {
+            // d <= valA: equation is valA - d - slack² = 0
+            Expr *d = Distance(workplane, ptA, ptB);
+            Expr *slack = Expr::From(valP);
+            AddEq(l, exA->Minus(d)->Minus(slack->Square()), 0);
+            return;
+        }
 
         case Type::PROJ_PT_DISTANCE: {
             ExprVector pA = SK.GetEntity(ptA)->PointGetExprs(),
@@ -673,6 +774,26 @@ void ConstraintBase::GenerateEquations(IdList<Equation,hEquation> *l,
             return;
         }
 
+        case Type::PT_ON_SEGMENT: {
+            // Same as PT_ON_LINE - point constrained to infinite line
+            // The "segment" aspect is visual only (shows endpoints)
+            // True bounded constraint not feasible due to solver limitations
+            EntityBase *ln = SK.GetEntity(entityA);
+            EntityBase *a = SK.GetEntity(ln->point[0]);
+            EntityBase *b = SK.GetEntity(ln->point[1]);
+            EntityBase *p = SK.GetEntity(ptA);
+
+            ExprVector ep = p->PointGetExprsInWorkplane(workplane);
+            ExprVector ea = a->PointGetExprsInWorkplane(workplane);
+            ExprVector eb = b->PointGetExprsInWorkplane(workplane);
+
+            Expr *t = Expr::From(valP);
+            ExprVector ptOnLine = ea.Plus(eb.Minus(ea).ScaledBy(t));
+            ExprVector eq = ptOnLine.Minus(ep);
+            AddEq(l, eq);
+            return;
+        }
+
         case Type::PT_ON_CIRCLE: {
             // This actually constrains the point to lie on the cylinder.
             EntityBase *circle = SK.GetEntity(entityA);
@@ -688,6 +809,154 @@ void ConstraintBase::GenerateEquations(IdList<Equation,hEquation> *l,
             Expr *r = circle->CircleGetRadiusExpr();
 
             AddEq(l, du->Square()->Plus(dv->Square())->Sqrt()->Minus(r), 0);
+            return;
+        }
+
+        case Type::PT_ON_CUBIC: {
+            // Constrain point to lie on cubic Bezier curve
+            // B(t) = (1-t)³P0 + 3(1-t)²tP1 + 3(1-t)t²P2 + t³P3
+            // For multi-segment splines, t is a global parameter [0, numSegments]
+            // where integer part = segment index, fractional part = position within segment
+            EntityBase *cubic = SK.GetEntity(entityA);
+            ExprVector p0, p1, p2, p3;
+            int ep = cubic->extraPoints;
+
+            // Number of on-curve points and segments
+            int pts = ep + 2;      // on-curve points: start, intermediates, end
+            int numSegments = pts - 1;
+
+            // Get current t value and determine segment
+            double tGlobalVal = SK.GetParam(valP)->val;
+            // Clamp to valid range
+            if(tGlobalVal < 0.001) tGlobalVal = 0.001;
+            if(tGlobalVal > numSegments - 0.001) tGlobalVal = numSegments - 0.001;
+            int segment = (int)floor(tGlobalVal);
+            if(segment >= numSegments) segment = numSegments - 1;
+            if(segment < 0) segment = 0;
+
+            if(ep == 0) {
+                // Basic 4-point Bezier: entity points ARE the Bezier control points
+                p0 = SK.GetEntity(cubic->point[0])->PointGetExprsInWorkplane(workplane);
+                p1 = SK.GetEntity(cubic->point[1])->PointGetExprsInWorkplane(workplane);
+                p2 = SK.GetEntity(cubic->point[2])->PointGetExprsInWorkplane(workplane);
+                p3 = SK.GetEntity(cubic->point[3])->PointGetExprsInWorkplane(workplane);
+            } else {
+                // Interpolating spline: compute Bezier control points symbolically
+                // Entity layout: point[0]=start, point[1]=ctrl_s, point[2..ep+1]=intermediates,
+                //                point[ep+2]=ctrl_f, point[ep+3]=end
+
+                // Get tangent control points (these define tangent direction at endpoints)
+                ExprVector ctrl_s = SK.GetEntity(cubic->point[1])->PointGetExprsInWorkplane(workplane);
+                ExprVector ctrl_f = SK.GetEntity(cubic->point[ep+2])->PointGetExprsInWorkplane(workplane);
+
+                // Build array of on-curve points pt[0..pts-1]
+                std::vector<ExprVector> pt(pts);
+                pt[0] = SK.GetEntity(cubic->point[0])->PointGetExprsInWorkplane(workplane);
+                for(int i = 1; i < pts - 1; i++) {
+                    pt[i] = SK.GetEntity(cubic->point[i+1])->PointGetExprsInWorkplane(workplane);
+                }
+                pt[pts-1] = SK.GetEntity(cubic->point[ep+3])->PointGetExprsInWorkplane(workplane);
+
+                // Compute tangent offsets X[0..n-1] where X[k] is at pt[k+1]
+                // Tridiagonal system: X[i-1] + 4*X[i] + X[i+1] = b[i]
+                int n = ep;  // number of interior tangent offsets to solve
+                std::vector<ExprVector> X(n);
+
+                if(n == 1) {
+                    // Single unknown: 4*X[0] = ctrl_f - ctrl_s
+                    X[0] = ctrl_f.Minus(ctrl_s).ScaledBy(Expr::From(0.25));
+                } else if(n == 2) {
+                    // b[0] = pt[2] - ctrl_s, b[1] = ctrl_f - pt[1]
+                    ExprVector b0 = pt[2].Minus(ctrl_s);
+                    ExprVector b1 = ctrl_f.Minus(pt[1]);
+                    Expr *inv15 = Expr::From(1.0/15.0);
+                    X[0] = b0.ScaledBy(Expr::From(4.0)).Minus(b1).ScaledBy(inv15);
+                    X[1] = b1.ScaledBy(Expr::From(4.0)).Minus(b0).ScaledBy(inv15);
+                } else if(n == 3) {
+                    ExprVector b0 = pt[2].Minus(ctrl_s);
+                    ExprVector b1 = pt[3].Minus(pt[1]);
+                    ExprVector b2 = ctrl_f.Minus(pt[2]);
+                    Expr *inv56 = Expr::From(1.0/56.0);
+                    Expr *inv14 = Expr::From(1.0/14.0);
+                    X[0] = b0.ScaledBy(Expr::From(15.0)).Minus(b1.ScaledBy(Expr::From(4.0))).Plus(b2).ScaledBy(inv56);
+                    X[1] = b1.ScaledBy(Expr::From(4.0)).Minus(b0).Minus(b2).ScaledBy(inv14);
+                    X[2] = b2.ScaledBy(Expr::From(15.0)).Minus(b1.ScaledBy(Expr::From(4.0))).Plus(b0).ScaledBy(inv56);
+                } else {
+                    // General case: Thomas algorithm
+                    std::vector<ExprVector> b(n);
+                    b[0] = pt[2].Minus(ctrl_s);
+                    for(int i = 1; i < n - 1; i++) {
+                        b[i] = pt[i+2].Minus(pt[i]);
+                    }
+                    b[n-1] = ctrl_f.Minus(pt[n-1]);
+
+                    std::vector<Expr*> c_prime(n);
+                    std::vector<ExprVector> d_prime(n);
+                    c_prime[0] = Expr::From(0.25);
+                    d_prime[0] = b[0].ScaledBy(Expr::From(0.25));
+                    for(int i = 1; i < n; i++) {
+                        Expr *denom = Expr::From(4.0)->Minus(c_prime[i-1]);
+                        if(i < n - 1) c_prime[i] = Expr::From(1.0)->Div(denom);
+                        d_prime[i] = b[i].Minus(d_prime[i-1]).ScaledBy(Expr::From(1.0)->Div(denom));
+                    }
+                    X[n-1] = d_prime[n-1];
+                    for(int i = n - 2; i >= 0; i--) {
+                        X[i] = d_prime[i].Minus(X[i+1].ScaledBy(c_prime[i]));
+                    }
+                }
+
+                // Build Bezier control points for the requested segment
+                int seg = segment;
+                if(seg < 0) seg = 0;
+                if(seg > numSegments - 1) seg = numSegments - 1;
+
+                // P0 and P1 (start of segment)
+                if(seg == 0) {
+                    p0 = pt[0];
+                    p1 = ctrl_s;
+                } else {
+                    p0 = pt[seg];
+                    p1 = pt[seg].Plus(X[seg-1]);
+                }
+
+                // P2 and P3 (end of segment)
+                if(seg == numSegments - 1) {
+                    p2 = ctrl_f;
+                    p3 = pt[pts-1];
+                } else {
+                    p2 = pt[seg+1].Minus(X[seg]);
+                    p3 = pt[seg+1];
+                }
+            }
+
+            // Use workplane coordinates for the constrained point (same as other PT_ON_* constraints)
+            ExprVector ptExpr = SK.GetEntity(ptA)->PointGetExprsInWorkplane(workplane);
+
+            // For multi-segment splines, t is global [0, numSegments]
+            // Local t within segment = tGlobal - segment
+            Expr *tGlobal = Expr::From(valP);
+            Expr *t = (ep > 0)
+                ? tGlobal->Minus(Expr::From((double)segment))
+                : tGlobal;
+
+            Expr *one = Expr::From(1.0);
+            Expr *three = Expr::From(3.0);
+            Expr *omt = one->Minus(t);  // (1 - t)
+
+            // Compute Bezier coefficients
+            Expr *omt2 = omt->Times(omt);       // (1-t)²
+            Expr *omt3 = omt2->Times(omt);      // (1-t)³
+            Expr *t2 = t->Times(t);             // t²
+            Expr *t3 = t2->Times(t);            // t³
+
+            // B(t) = (1-t)³P0 + 3(1-t)²tP1 + 3(1-t)t²P2 + t³P3
+            ExprVector ptOnCubic = p0.ScaledBy(omt3)
+                .Plus(p1.ScaledBy(three->Times(omt2)->Times(t)))
+                .Plus(p2.ScaledBy(three->Times(omt)->Times(t2)))
+                .Plus(p3.ScaledBy(t3));
+
+            ExprVector eq = ptOnCubic.Minus(ptExpr);
+            AddEq(l, eq);
             return;
         }
 
@@ -947,6 +1216,20 @@ void ConstraintBase::GenerateEquations(IdList<Equation,hEquation> *l,
 
             // The line is perpendicular to the radius
             AddEq(l, ld.Dot(ac.Minus(ap)), 0);
+            return;
+        }
+
+        case Type::CIRCLE_LINE_TANGENT: {
+            // Circle tangent to line: distance from center to line = radius
+            EntityBase *circle = SK.GetEntity(entityA);
+
+            // Get radius of circle
+            Expr *radius = circle->CircleGetRadiusExpr();
+
+            // Distance from center to line must equal radius
+            // Use squared distance to avoid sign issues
+            Expr *d = PointLineDistance(workplane, circle->point[0], entityB);
+            AddEq(l, d->Square()->Minus(radius->Square()), 0);
             return;
         }
 

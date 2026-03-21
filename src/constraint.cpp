@@ -44,11 +44,15 @@ std::string Constraint::DescriptionString() const {
         case Type::ARC_LINE_TANGENT:    s = C_("constr-name", "arc-line-tangent"); break;
         case Type::CUBIC_LINE_TANGENT:  s = C_("constr-name", "cubic-line-tangent"); break;
         case Type::CURVE_CURVE_TANGENT: s = C_("constr-name", "curve-curve-tangent"); break;
+        case Type::CIRCLE_LINE_TANGENT: s = C_("constr-name", "circle-line-tangent"); break;
         case Type::PERPENDICULAR:       s = C_("constr-name", "perpendicular"); break;
         case Type::EQUAL_RADIUS:        s = C_("constr-name", "eq-radius"); break;
         case Type::EQUAL_ANGLE:         s = C_("constr-name", "eq-angle"); break;
         case Type::EQUAL_LINE_ARC_LEN:  s = C_("constr-name", "eq-line-len-arc-len"); break;
         case Type::WHERE_DRAGGED:       s = C_("constr-name", "lock-where-dragged"); break;
+        case Type::PT_PT_DISTANCE_MIN:  s = C_("constr-name", "distance-min"); break;
+        case Type::PT_PT_DISTANCE_MAX:  s = C_("constr-name", "distance-max"); break;
+        case Type::PT_ON_SEGMENT:       s = C_("constr-name", "pt-on-segment"); break;
         case Type::COMMENT:             s = C_("constr-name", "comment"); break;
         default:                        s = "???"; break;
     }
@@ -357,11 +361,69 @@ void Constraint::MenuConstrain(Command id) {
                 c.ptA = gs.point[0];
                 c.entityA = gs.entity[0];
                 newcons.push_back(c);
+            } else if(gs.points == 1 && gs.cubics == 1 && gs.n == 2) {
+                c.type = Type::PT_ON_CUBIC;
+                c.ptA = gs.point[0];
+                c.entityA = gs.entity[0];
+                // Snap point to closest location on cubic before constraining
+                Entity *cubic = SK.GetEntity(gs.entity[0]);
+                Entity *pt = SK.GetEntity(gs.point[0]);
+
+                Vector ptPos = pt->PointGetNum();
+
+                // Helper lambda to evaluate Bezier at t
+                auto evalBezier = [](Vector p0, Vector p1, Vector p2, Vector p3, double t) {
+                    double omt = 1.0 - t;
+                    return p0.ScaledBy(omt*omt*omt)
+                        .Plus(p1.ScaledBy(3*omt*omt*t))
+                        .Plus(p2.ScaledBy(3*omt*t*t))
+                        .Plus(p3.ScaledBy(t*t*t));
+                };
+
+                double bestT = 0.5;
+                double bestDist = 1e10;
+                int bestSegment = 0;
+                Vector snapPos;
+
+                // Use entity's generated Bezier curves for accurate snapping
+                SBezierList *sbl = cubic->GetOrGenerateBezierCurves();
+                int seg = 0;
+                for(const SBezier &sb : sbl->l) {
+                    if(sb.deg != 3) { seg++; continue; }
+                    for(int i = 0; i <= 20; i++) {
+                        double t = i / 20.0;
+                        Vector ptOnCurve = evalBezier(sb.ctrl[0], sb.ctrl[1], sb.ctrl[2], sb.ctrl[3], t);
+                        double dist = ptPos.Minus(ptOnCurve).Magnitude();
+                        if(dist < bestDist) {
+                            bestDist = dist;
+                            bestT = t;
+                            bestSegment = seg;
+                            snapPos = ptOnCurve;
+                        }
+                    }
+                    seg++;
+                }
+
+                // Encode segment index + initial t into valA
+                // Integer part = segment, fractional part = t
+                c.valA = bestSegment + bestT;
+                pt->PointForceTo(snapPos);
+                newcons.push_back(c);
             } else if(gs.points == 1 && gs.faces >= 1 && gs.n == gs.points+gs.faces) {
                 c.type = Type::PT_ON_FACE;
                 c.ptA = gs.point[0];
                 for (int k=0; k<gs.faces; k++) {
                     c.entityA = gs.face[k];
+                    newcons.push_back(c);
+                }
+            } else if(gs.circlesOrArcs >= 2 && gs.circlesOrArcs == gs.n) {
+                // Concentric constraint: make center points coincident
+                c.type = Type::POINTS_COINCIDENT;
+                Entity *first = SK.GetEntity(gs.entity[0]);
+                c.ptA = first->point[0];  // Center of first circle/arc
+                for(size_t k = 1; k < gs.entity.size(); k++) {
+                    Entity *other = SK.GetEntity(gs.entity[k]);
+                    c.ptB = other->point[0];  // Center of other circle/arc
                     newcons.push_back(c);
                 }
             } else {
@@ -371,7 +433,9 @@ void Constraint::MenuConstrain(Command id) {
                         "    * a point and a workplane (point in plane)\n"
                         "    * a point and a line segment (point on line)\n"
                         "    * a point and a circle or arc (point on curve)\n"
-                        "    * a point and one to three plane faces (point on face(s))\n"));
+                        "    * a point and a cubic spline (point on curve)\n"
+                        "    * a point and one to three plane faces (point on face(s))\n"
+                        "    * two or more circles or arcs (concentric)\n"));
                 return;
             }
             for (auto&& nc : newcons)
@@ -885,6 +949,18 @@ void Constraint::MenuConstrain(Command id) {
                 c.entityA = eA->h;
                 c.entityB = eB->h;
                 newcons.push_back(c);
+            } else if(gs.lineSegments == 1 && gs.circlesOrArcs == 1 &&
+                      gs.arcs == 0 && gs.n == 2) {
+                // Circle-line tangent: distance from center to line equals radius
+                Entity *line = SK.GetEntity(gs.entity[0]),
+                       *circle = SK.GetEntity(gs.entity[1]);
+                if(line->type == Entity::Type::CIRCLE) {
+                    swap(line, circle);
+                }
+                c.type = Type::CIRCLE_LINE_TANGENT;
+                c.entityA = circle->h;
+                c.entityB = line->h;
+                newcons.push_back(c);
             } else {
                 Error(_("Bad selection for parallel / tangent constraint. This "
                         "constraint can apply to:\n\n"
@@ -895,7 +971,8 @@ void Constraint::MenuConstrain(Command id) {
                         "    * two line segments, arcs, or beziers, that share "
                               "an endpoint (tangent)\n"
                         "    * two line segments, arcs, or beziers, that do not share "
-                              "an endpoint and the end point(s) of the curve(s) (tangent)\n"));
+                              "an endpoint and the end point(s) of the curve(s) (tangent)\n"
+                        "    * a circle and a line segment (tangent)\n"));
                         return;
             }
             SS.UndoRemember();
@@ -935,6 +1012,29 @@ void Constraint::MenuConstrain(Command id) {
                         "    * a point\n"));
                 return;
             }
+            AddConstraint(&c);
+            newcons.push_back(c);
+            break;
+
+        case Command::INEQUALITY:
+            if(gs.points == 2 && gs.n == 2) {
+                c.type = Type::PT_PT_DISTANCE_MIN;
+                c.ptA = gs.point[0];
+                c.ptB = gs.point[1];
+            } else if(gs.lineSegments == 1 && gs.n == 1) {
+                c.type = Type::PT_PT_DISTANCE_MIN;
+                Entity *e = SK.GetEntity(gs.entity[0]);
+                c.ptA = e->point[0];
+                c.ptB = e->point[1];
+            } else {
+                Error(_("Bad selection for inequality constraint. This "
+                        "constraint can apply to:\n\n"
+                        "    * two points (distance >= value or <= value)\n"
+                        "    * a line segment (length >= value or <= value)\n"));
+                return;
+            }
+            c.valA = 0;
+            c.ModifyToSatisfy();
             AddConstraint(&c);
             newcons.push_back(c);
             break;
@@ -980,7 +1080,8 @@ void Constraint::MenuConstrain(Command id) {
         }
 
         if((id == Command::DISTANCE_DIA || id == Command::ANGLE ||
-            id == Command::RATIO || id == Command::DIFFERENCE) &&
+            id == Command::RATIO || id == Command::DIFFERENCE ||
+            id == Command::INEQUALITY) &&
                 SS.immediatelyEditDimension) {
             SS.GW.EditConstraint(nc.h);
         }
