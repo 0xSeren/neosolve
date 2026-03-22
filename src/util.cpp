@@ -1032,6 +1032,13 @@ bool BBox::Contains(const Point2d &p, double r) const {
            p.y <= (maxp.y + r);
 }
 
+bool BBox::ContainsBBox(const BBox &b1) const {
+    // Check if this bbox fully contains b1
+    return b1.minp.x >= minp.x && b1.maxp.x <= maxp.x &&
+           b1.minp.y >= minp.y && b1.maxp.y <= maxp.y &&
+           b1.minp.z >= minp.z && b1.maxp.z <= maxp.z;
+}
+
 const std::vector<double>& StipplePatternDashes(StipplePattern pattern) {
     static bool initialized;
     static std::vector<double> dashes[(size_t)StipplePattern::LAST + 1];
