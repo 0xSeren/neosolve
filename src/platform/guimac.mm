@@ -682,6 +682,18 @@ MenuBarRef GetOrCreateMainMenu(bool *unique) {
     if(chr >= NSF1FunctionKey && chr <= NSF12FunctionKey) {
         event.key = KeyboardEvent::Key::FUNCTION;
         event.num = chr - NSF1FunctionKey + 1;
+    } else if(chr == NSPageUpFunctionKey) {
+        event.key = KeyboardEvent::Key::PAGE_UP;
+    } else if(chr == NSPageDownFunctionKey) {
+        event.key = KeyboardEvent::Key::PAGE_DOWN;
+    } else if(chr == NSUpArrowFunctionKey) {
+        event.key = KeyboardEvent::Key::ARROW_UP;
+    } else if(chr == NSDownArrowFunctionKey) {
+        event.key = KeyboardEvent::Key::ARROW_DOWN;
+    } else if(chr == NSLeftArrowFunctionKey) {
+        event.key = KeyboardEvent::Key::ARROW_LEFT;
+    } else if(chr == NSRightArrowFunctionKey) {
+        event.key = KeyboardEvent::Key::ARROW_RIGHT;
     } else {
         event.key = KeyboardEvent::Key::CHARACTER;
         event.chr = chr;
@@ -1345,7 +1357,10 @@ public:
         NSButton *nsButton = [nsAlert addButtonWithTitle:Wrap(PrepareMnemonics(label))];
         if(!isDefault && [nsButton.keyEquivalent isEqualToString:@"\n"]) {
             nsButton.keyEquivalent = @"";
-        } else if(response == Response::CANCEL) {
+        }
+        // Allow ESC to dismiss dialogs with Cancel button or single OK button
+        if(response == Response::CANCEL ||
+           (response == Response::OK && responses.empty())) {
             nsButton.keyEquivalent = @"\e";
         }
         responses.push_back(response);
