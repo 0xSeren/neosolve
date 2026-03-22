@@ -659,6 +659,14 @@ void SolveSpaceUI::UpgradeLegacyData() {
                 break;
             }
 
+            case Constraint::Type::PT_ON_CUBIC: {
+                if(AllParamsExistFor(c)) continue;
+                // Initialize t parameter to middle of curve; solver will refine
+                Param *p = SK.GetParam(c.h.param(0));
+                p->val = 0.5;
+                break;
+            }
+
             case Constraint::Type::CUBIC_LINE_TANGENT: {
                 if(AllParamsExistFor(c)) continue;
 

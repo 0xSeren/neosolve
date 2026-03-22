@@ -991,6 +991,18 @@ public:
                 if(wParam >= VK_F1 && wParam <= VK_F12) {
                     event.key = Platform::KeyboardEvent::Key::FUNCTION;
                     event.num = wParam - VK_F1 + 1;
+                } else if(wParam == VK_PRIOR) {
+                    event.key = Platform::KeyboardEvent::Key::PAGE_UP;
+                } else if(wParam == VK_NEXT) {
+                    event.key = Platform::KeyboardEvent::Key::PAGE_DOWN;
+                } else if(wParam == VK_UP) {
+                    event.key = Platform::KeyboardEvent::Key::ARROW_UP;
+                } else if(wParam == VK_DOWN) {
+                    event.key = Platform::KeyboardEvent::Key::ARROW_DOWN;
+                } else if(wParam == VK_LEFT) {
+                    event.key = Platform::KeyboardEvent::Key::ARROW_LEFT;
+                } else if(wParam == VK_RIGHT) {
+                    event.key = Platform::KeyboardEvent::Key::ARROW_RIGHT;
                 } else {
                     event.key = Platform::KeyboardEvent::Key::CHARACTER;
                     event.chr = tolower(MapVirtualKeyW(wParam, MAPVK_VK_TO_CHAR));
