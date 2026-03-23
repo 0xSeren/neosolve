@@ -20,6 +20,17 @@
 #include <BRepOffsetAPI_MakeThickSolid.hxx>
 #include <BRepOffsetAPI_ThruSections.hxx>
 #include <BRepOffsetAPI_MakePipeShell.hxx>
+#include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRepPrimAPI_MakeCone.hxx>
+#include <BRepAlgoAPI_Cut.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <BRepOffsetAPI_MakePipe.hxx>
+#include <GeomAPI_PointsToBSpline.hxx>
+#include <Geom_BSplineCurve.hxx>
+#include <TColgp_Array1OfPnt.hxx>
+#include <GeomAbs_Shape.hxx>
 #include <BRepAdaptor_Curve.hxx>
 #include <BRepGProp.hxx>
 #include <GProp_GProps.hxx>
@@ -1016,37 +1027,56 @@ void Group::GenerateShellAndMesh() {
         if(prev && prev->runningSolidModel && !prev->runningSolidModel->IsEmpty()) {
             try {
                 double thickness = (valA > 0) ? valA : 1.0;
-                int faceIndex = (int)valB;  // 0 = auto (largest), 1+ = specific face
 
-                // Collect all faces and find the one to remove
+                // Collect all faces with their indices
                 TopTools_ListOfShape facesToRemove;
-                std::vector<std::pair<TopoDS_Face, double>> facesWithArea;
+                std::vector<TopoDS_Face> allFaces;
+                std::list<TopoDS_Shape> seenFaces;
+                uint32_t faceIndex = 0;
 
                 TopExp_Explorer faceExp(prev->runningSolidModel->shapeAcc, TopAbs_FACE);
                 while(faceExp.More()) {
                     TopoDS_Face face = TopoDS::Face(faceExp.Current());
-                    GProp_GProps props;
-                    BRepGProp::SurfaceProperties(face, props);
-                    double area = props.Mass();
-                    facesWithArea.push_back({face, area});
+
+                    // Skip duplicate faces
+                    bool duplicate = false;
+                    for(const auto &seen : seenFaces) {
+                        if(seen.IsSame(face)) {
+                            duplicate = true;
+                            break;
+                        }
+                    }
+
+                    if(!duplicate) {
+                        seenFaces.push_back(face);
+                        allFaces.push_back(face);
+                    }
                     faceExp.Next();
+                    faceIndex++;
                 }
 
-                if(!facesWithArea.empty()) {
-                    if(faceIndex <= 0 || faceIndex > (int)facesWithArea.size()) {
-                        // Auto: find largest face
-                        double maxArea = 0;
-                        int maxIdx = 0;
-                        for(size_t i = 0; i < facesWithArea.size(); i++) {
-                            if(facesWithArea[i].second > maxArea) {
-                                maxArea = facesWithArea[i].second;
-                                maxIdx = (int)i;
+                if(!allFaces.empty()) {
+                    if(!selectedFaces.empty()) {
+                        // Use selected faces
+                        for(uint32_t idx : selectedFaces) {
+                            if(idx < allFaces.size()) {
+                                facesToRemove.Append(allFaces[idx]);
                             }
                         }
-                        facesToRemove.Append(facesWithArea[maxIdx].first);
                     } else {
-                        // Use specified face (1-indexed)
-                        facesToRemove.Append(facesWithArea[faceIndex - 1].first);
+                        // Auto: find largest face
+                        double maxArea = 0;
+                        size_t maxIdx = 0;
+                        for(size_t i = 0; i < allFaces.size(); i++) {
+                            GProp_GProps props;
+                            BRepGProp::SurfaceProperties(allFaces[i], props);
+                            double area = props.Mass();
+                            if(area > maxArea) {
+                                maxArea = area;
+                                maxIdx = i;
+                            }
+                        }
+                        facesToRemove.Append(allFaces[maxIdx]);
                     }
                 }
 
@@ -1291,8 +1321,27 @@ void Group::GenerateShellAndMesh() {
     bool skipOccShapeOps = (type == Type::IMPORT_SOLID) &&
                            (srcg->meshCombine == CombineAs::ASSEMBLE);
 
+    // If this group is suppressed, copy everything from the previous solid model
+    if(suppress && runningSolidModel) {
+        Group *pg = prevg;
+        while(pg) {
+            if(pg->runningSolidModel && !pg->runningSolidModel->shapeAcc.IsNull()) {
+                // Copy all data from previous model
+                runningSolidModel->shapeAcc = pg->runningSolidModel->shapeAcc;
+                // Use MakeFromCopyOf to properly deep-copy the mesh (List has shallow copy)
+                runningSolidModel->displayMesh.MakeFromCopyOf(&pg->runningSolidModel->displayMesh);
+                runningSolidModel->faces = pg->runningSolidModel->faces;
+                runningSolidModel->edges = pg->runningSolidModel->edges;
+                // Create FACE_OCC entities for selection (uses our group's handles)
+                CreateOccFaceEntities(&SK.entity);
+                break;
+            }
+            pg = pg->PreviousGroup();
+        }
+    }
+
     // Perform OCC boolean operations to build the running solid model
-    if(thisSolidModel && !thisSolidModel->shape.IsNull() && !skipOccShapeOps) {
+    if(thisSolidModel && !thisSolidModel->shape.IsNull() && !skipOccShapeOps && !suppress) {
         // For IMPORT_SOLID, only transform OCC shape if there's a previous solid
         // (transformation is needed for boolean operations with other solids)
         bool needShapeTransform = (type == Type::IMPORT_SOLID) && prevg &&
@@ -1403,6 +1452,10 @@ void Group::GenerateShellAndMesh() {
                 runningSolidModel->edges[kv.first] = transformed;
             }
         } else {
+            // Extract face geometry for potential use in right-click menus
+            runningSolidModel->ExtractFaces();
+            // Create FACE_OCC entities for these faces so they work with selection
+            CreateOccFaceEntities(&SK.entity);
             runningSolidModel->Triangulate(SS.ChordTolMm());
             runningSolidModel->ExtractEdges();
         }
@@ -1774,6 +1827,34 @@ bool Group::IsUsedAsSweepPath() const {
 #endif
     return false;
 }
+
+#ifdef HAVE_OPENCASCADE
+void Group::CreateOccFaceEntities(EntityList *el) {
+    if(!runningSolidModel) return;
+
+    // Update the entity handles in the faces map to use proper FACE_OCC entities
+    for(auto &kv : runningSolidModel->faces) {
+        uint32_t faceIndex = kv.first;
+        SolidModelOcc::FaceInfo &info = kv.second;
+
+        // Create FACE_OCC entity for this face
+        Entity en = {};
+        en.type = Entity::Type::FACE_OCC;
+        en.group = h;
+        en.numPoint = info.point;
+        // Store normal in numNormal.v{x,y,z} - use w=0 as convention
+        en.numNormal = Quaternion::From(0, info.normal.x, info.normal.y, info.normal.z);
+
+        // Generate unique entity handle using Remap
+        en.h = Remap(Entity::NO_ENTITY, REMAP_OCC_FACE_BASE + faceIndex);
+
+        el->Add(&en);
+
+        // Update the FaceInfo to use this entity handle
+        info.entityHandle = en.h.v;
+    }
+}
+#endif
 
 void Group::DrawMesh(DrawMeshAs how, Canvas *canvas) {
     if(!(SS.GW.showShaded ||

@@ -94,9 +94,11 @@ void GraphicsWindow::ClearNonexistentSelectionItems() {
             s->tag = 1;
             change = true;
         }
-        if(s->entity.v && !(SK.entity.FindByIdNoOops(s->entity))) {
-            s->tag = 1;
-            change = true;
+        if(s->entity.v) {
+            if(!(SK.entity.FindByIdNoOops(s->entity))) {
+                s->tag = 1;
+                change = true;
+            }
         }
     }
     selection.RemoveTagged();
@@ -193,11 +195,13 @@ void GraphicsWindow::MakeSelected(Selection *stog) {
         selection.ClearTags();
         for(s = selection.First(); s; s = selection.NextAfter(s)) {
             hEntity he = s->entity;
-            if(he.v != 0 && SK.GetEntity(he)->IsFace()) {
-                c++;
-                // See also GraphicsWindow::GroupSelection "if(e->IsFace())"
-                // and Group::DrawMesh "case DrawMeshAs::SELECTED:"
-                if(c >= MAX_SELECTABLE_FACES) s->tag = 1;
+            if(he.v != 0) {
+                if(SK.GetEntity(he)->IsFace()) {
+                    c++;
+                    // See also GraphicsWindow::GroupSelection "if(e->IsFace())"
+                    // and Group::DrawMesh "case DrawMeshAs::SELECTED:"
+                    if(c >= MAX_SELECTABLE_FACES) s->tag = 1;
+                }
             }
         }
         selection.RemoveTagged();
@@ -378,7 +382,7 @@ GraphicsWindow::Selection GraphicsWindow::ChooseFromHoverToSelect() {
     int bestOrder = -1;
     int bestZIndex = 0;
     double bestDepth = VERY_POSITIVE;
-    
+
     for(const Hover &hov : hoverList) {
         hGroup hg = {};
         if(hov.selection.entity.v != 0) {
@@ -513,15 +517,31 @@ void GraphicsWindow::HitTestMakeSelection(Point2d mp) {
     if(pending.operation == Pending::NONE) {
         // Faces, from the triangle mesh; these are lowest priority
         if(sel.constraint.v == 0 && sel.entity.v == 0 && showShaded && showFaces) {
-            Group *g = SK.GetGroup(activeGroup);
-            SMesh *m = &(g->displayMesh);
+            // Don't pick mesh faces if there's a point in hoverList - points should
+            // always take priority over faces, even if ChooseFromHoverToSelect didn't
+            // select them (e.g., due to group order filtering)
+            bool hasPointInHover = false;
+            for(const Hover &hov : hoverList) {
+                if(hov.selection.entity.v != 0) {
+                    Entity *e = SK.entity.FindByIdNoOops(hov.selection.entity);
+                    if(e && e->IsPoint()) {
+                        hasPointInHover = true;
+                        break;
+                    }
+                }
+            }
 
-            uint32_t v = m->FirstIntersectionWith(mp);
-            if(v) {
-                sel.entity.v = v;
-                Hover hov = {};
-                hov.selection = sel;
-                hoverList.Add(&hov);
+            if(!hasPointInHover) {
+                Group *g = SK.GetGroup(activeGroup);
+                SMesh *m = &(g->displayMesh);
+
+                uint32_t v = m->FirstIntersectionWith(mp);
+                if(v) {
+                    sel.entity.v = v;
+                    Hover hov = {};
+                    hov.selection = sel;
+                    hoverList.Add(&hov);
+                }
             }
         }
     }

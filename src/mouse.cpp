@@ -569,11 +569,104 @@ void GraphicsWindow::MouseRightUp(double x, double y) {
     Platform::MenuRef menu = Platform::CreateMenu();
     context.active = true;
 
+#ifdef HAVE_OPENCASCADE
+    // Check if we're hovering over an OCC face (special handling before normal selection)
+    bool isOccFace = false;
+    Vector occFacePoint, occFaceNormal;
+    hGroup occFaceGroup = {};
+    if(hover.entity.v) {
+        Entity *e = SK.entity.FindByIdNoOops(hover.entity);
+        if(e && e->type == Entity::Type::FACE_OCC) {
+            isOccFace = true;
+            occFaceGroup = e->group;
+            occFacePoint = e->FaceGetPointNum();
+            occFaceNormal = e->FaceGetNormalNum();
+        }
+    }
+#endif
+
     if(!hover.IsEmpty()) {
         MakeSelected(&hover);
         SS.ScheduleShowTW();
     }
     GroupSelection();
+
+#ifdef HAVE_OPENCASCADE
+    // Add OCC face menu options if we detected an OCC face
+    if(isOccFace && occFaceGroup.v) {
+        Vector facePoint = occFacePoint;
+        Vector faceNormal = occFaceNormal;
+
+        menu->AddItem(_("Sketch on Face"), [this, facePoint, faceNormal]() {
+            ClearSelection();
+            SS.UndoRemember();
+
+            // Create a datum point to serve as origin for the new workplane.
+            // Use AddRequest which properly generates the entity immediately.
+            hRequest hr = AddRequest(Request::Type::DATUM_POINT, /*rememberForUndo=*/false);
+
+            // Make it construction and free in 3D
+            Request *req = SK.GetRequest(hr);
+            req->construction = true;
+            req->workplane = Entity::FREE_IN_3D;
+
+            // Position the datum point at the face center
+            hEntity hpt = hr.entity(0);
+            SK.GetEntity(hpt)->PointForceTo(facePoint);
+
+            // Now create the new sketch group
+            Group g = {};
+            g.visible = true;
+            g.type = Group::Type::DRAWING_WORKPLANE;
+            g.subtype = Group::Subtype::WORKPLANE_BY_POINT_ORTHO;
+            g.name = C_("group-name", "sketch-on-face");
+
+            // Create the workplane orientation from the face normal
+            // We need u (X axis) and v (Y axis) such that u × v = faceNormal
+            if(faceNormal.Magnitude() > LENGTH_EPS) {
+                Vector n = faceNormal.WithMagnitude(1);
+                // Find a vector not parallel to the normal to construct u
+                Vector arbitrary = (fabs(n.x) < 0.9) ? Vector::From(1, 0, 0) : Vector::From(0, 1, 0);
+                Vector u = arbitrary.Cross(n).WithMagnitude(1);  // X axis, perpendicular to normal
+                Vector v = n.Cross(u).WithMagnitude(1);          // Y axis, perpendicular to both
+                g.predef.q = Quaternion::From(u, v);
+            } else {
+                g.predef.q = Quaternion::From(1, 0, 0, 0);
+            }
+
+            // Reference the datum point we just created
+            g.predef.origin = hpt;
+
+            // Set group order - insert after active group (pattern from Group::MenuGroup)
+            bool afterActive = false;
+            for(hGroup hg : SK.groupOrder) {
+                Group *gi = SK.GetGroup(hg);
+                if(afterActive)
+                    gi->order += 1;
+                if(gi->h == activeGroup) {
+                    g.order = gi->order + 1;
+                    afterActive = true;
+                }
+            }
+
+            // Add the group
+            SK.group.AddAndAssignId(&g);
+            hGroup hg = g.h;  // Save handle before potential reallocation
+            SK.GetGroup(hg)->clean = false;
+            activeGroup = hg;
+            SS.GenerateAll();
+
+            // Re-get pointer after GenerateAll (could have reallocated)
+            Group *gg = SK.GetGroup(hg);
+            // Set active workplane after regeneration
+            gg->activeWorkplane = hg.entity(0);
+            gg->Activate();
+            TextWindow::ScreenSelectGroup(0, hg.v);
+            AnimateOntoWorkplane();
+        });
+        menu->AddSeparator();
+    }
+#endif
 
     bool itemsSelected = (gs.n > 0 || gs.constraints > 0);
     if(itemsSelected) {
@@ -889,6 +982,9 @@ bool GraphicsWindow::ConstrainPointByHovered(hEntity pt, const Point2d *projecte
 
     Entity *point = SK.GetEntity(pt);
     Entity *e = SK.GetEntity(hover.entity);
+
+    // Skip OCC faces - can't constrain points to them directly
+    if(e->type == Entity::Type::FACE_OCC) return false;
     if(e->IsPoint()) {
         point->PointForceTo(e->PointGetNum());
         Constraint::ConstrainCoincident(e->h, pt);
@@ -1054,13 +1150,24 @@ void GraphicsWindow::MouseLeftDown(double mx, double my, bool shiftDown, bool ct
     switch(pending.operation) {
         case Pending::COMMAND:
             switch(pending.command) {
-                case Command::DATUM_POINT:
+                case Command::DATUM_POINT: {
                     hr = AddRequest(Request::Type::DATUM_POINT);
-                    SK.GetEntity(hr.entity(0))->PointForceTo(v);
+
+                    // Try to place the point on a mesh face if clicking on one
+                    Vector pointPos = v;
+                    Group *g = SK.GetGroup(SS.GW.activeGroup);
+                    SMesh *m = &(g->displayMesh);
+                    Vector intersect;
+                    if(m->IntersectionWith(mouse, &intersect)) {
+                        pointPos = intersect;
+                    }
+
+                    SK.GetEntity(hr.entity(0))->PointForceTo(pointPos);
                     ConstrainPointByHovered(hr.entity(0), &mouse);
 
                     ClearSuper();
                     break;
+                }
 
                 case Command::LINE_SEGMENT:
                 case Command::CONSTR_SEGMENT:
@@ -1318,6 +1425,8 @@ void GraphicsWindow::MouseLeftDown(double mx, double my, bool shiftDown, bool ct
         case Pending::DRAGGING_NEW_LINE_POINT: {
             if(hover.entity.v) {
                 Entity *e = SK.GetEntity(hover.entity);
+                // Skip OCC faces - they're not constrainable like points
+                if(e->type == Entity::Type::FACE_OCC) break;
                 if(e->IsPoint()) {
                     hRequest hrl = pending.point.request();
                     Entity *sp = SK.GetEntity(hrl.entity(1));

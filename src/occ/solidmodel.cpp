@@ -31,6 +31,9 @@
 #include <BRep_Builder.hxx>
 #include <IGESControl_Reader.hxx>
 #include <Interface_Static.hxx>
+#include <BRepGProp.hxx>
+#include <GProp_GProps.hxx>
+#include <BRepAdaptor_Surface.hxx>
 #include <list>
 
 namespace SolveSpace {
@@ -40,6 +43,7 @@ void SolidModelOcc::Clear() {
     shapeAcc.Nullify();
     displayMesh.Clear();
     edges.clear();
+    faces.clear();
     meshCacheValid = false;
 }
 
@@ -50,7 +54,8 @@ SolidModelOcc::SolidModelOcc(const SolidModelOcc &other)
       cachedShapeHash(other.cachedShapeHash),
       cachedChordTol(other.cachedChordTol),
       meshCacheValid(other.meshCacheValid),
-      edges(other.edges)
+      edges(other.edges),
+      faces(other.faces)
 {
     displayMesh.MakeFromCopyOf(const_cast<SMesh*>(&other.displayMesh));
 }
@@ -64,6 +69,7 @@ SolidModelOcc& SolidModelOcc::operator=(const SolidModelOcc &other) {
         cachedChordTol = other.cachedChordTol;
         meshCacheValid = other.meshCacheValid;
         edges = other.edges;
+        faces = other.faces;
         displayMesh.Clear();
         displayMesh.MakeFromCopyOf(const_cast<SMesh*>(&other.displayMesh));
     }
@@ -77,7 +83,8 @@ SolidModelOcc::SolidModelOcc(SolidModelOcc &&other) noexcept
       cachedShapeHash(other.cachedShapeHash),
       cachedChordTol(other.cachedChordTol),
       meshCacheValid(other.meshCacheValid),
-      edges(std::move(other.edges))
+      edges(std::move(other.edges)),
+      faces(std::move(other.faces))
 {
     // Transfer the mesh data - steal the pointer
     displayMesh.l = other.displayMesh.l;
@@ -104,6 +111,7 @@ SolidModelOcc& SolidModelOcc::operator=(SolidModelOcc &&other) noexcept {
         cachedChordTol = other.cachedChordTol;
         meshCacheValid = other.meshCacheValid;
         edges = std::move(other.edges);
+        faces = std::move(other.faces);
 
         // Transfer the mesh data
         displayMesh.l = other.displayMesh.l;
@@ -214,7 +222,8 @@ void SolidModelOcc::UpdateAccumulator(Operation op, const SolidModelOcc *previou
 }
 
 // Helper to process faces recursively
-static void ProcessFace(const TopoDS_Face &face, SMesh &mesh, RgbaColor color) {
+static void ProcessFace(const TopoDS_Face &face, SMesh &mesh, RgbaColor color,
+                        uint32_t faceEntityHandle = 0) {
     if(face.IsNull()) return;
 
     TopLoc_Location loc;
@@ -282,6 +291,7 @@ static void ProcessFace(const TopoDS_Face &face, SMesh &mesh, RgbaColor color) {
             tri.cn = vn3;
         }
 
+        tri.meta.face = faceEntityHandle;  // Set face entity for selection
         tri.meta.color = color;
         mesh.AddTriangle(&tri);
     }
@@ -296,6 +306,43 @@ static void ProcessShape(const TopoDS_Shape &shape, SMesh &mesh, RgbaColor color
         TopoDS_Face face = TopoDS::Face(explorer.Current());
         ProcessFace(face, mesh, color);
         explorer.Next();
+    }
+}
+
+// Process shape with face entity handles for selection support
+static void ProcessShapeWithFaces(const TopoDS_Shape &shape, SMesh &mesh, RgbaColor color,
+                                   const std::map<uint32_t, SolidModelOcc::FaceInfo> &faceMap) {
+    std::list<TopoDS_Shape> seenFaces;
+    uint32_t faceIndex = 0;
+
+    TopExp_Explorer explorer(shape, TopAbs_FACE);
+    while(explorer.More()) {
+        TopoDS_Face face = TopoDS::Face(explorer.Current());
+
+        // Skip duplicate faces (same logic as ExtractFaces)
+        bool duplicate = false;
+        for(const auto &seen : seenFaces) {
+            if(seen.IsSame(face)) {
+                duplicate = true;
+                break;
+            }
+        }
+
+        if(!duplicate) {
+            seenFaces.push_back(face);
+
+            // Look up the entity handle for this face
+            uint32_t entityHandle = 0;
+            auto it = faceMap.find(faceIndex);
+            if(it != faceMap.end()) {
+                entityHandle = it->second.entityHandle;
+            }
+
+            ProcessFace(face, mesh, color, entityHandle);
+        }
+
+        explorer.Next();
+        faceIndex++;
     }
 }
 
@@ -345,7 +392,13 @@ void SolidModelOcc::Triangulate(double chordTol) {
 
         // Use a default gray color - actual color will be set by Group
         RgbaColor color = RgbaColor::FromFloat(0.6f, 0.6f, 0.6f, 1.0f);
-        ProcessShape(shapeAcc, displayMesh, color);
+
+        // Use face-aware processing if faces have been extracted (for selection support)
+        if(!faces.empty()) {
+            ProcessShapeWithFaces(shapeAcc, displayMesh, color, faces);
+        } else {
+            ProcessShape(shapeAcc, displayMesh, color);
+        }
 
         // Update cache state
         cachedShapeHash = shapeHash;
@@ -405,6 +458,73 @@ void SolidModelOcc::ExtractEdges() {
         explorer.Next();
         edgeIndex++;
     }
+}
+
+int SolidModelOcc::ExtractFaces() {
+    faces.clear();
+
+    if(shapeAcc.IsNull()) return 0;
+
+    std::list<TopoDS_Shape> seenFaces;
+    uint32_t faceIndex = 0;
+
+    TopExp_Explorer explorer(shapeAcc, TopAbs_FACE);
+    while(explorer.More()) {
+        TopoDS_Face face = TopoDS::Face(explorer.Current());
+
+        // Skip duplicate faces
+        bool duplicate = false;
+        for(const auto &seen : seenFaces) {
+            if(seen.IsSame(face)) {
+                duplicate = true;
+                break;
+            }
+        }
+
+        if(!duplicate) {
+            seenFaces.push_back(face);
+
+            FaceInfo info;
+            // Entity handle will be set by CreateOccFaceEntities after extraction
+            info.entityHandle = 0;
+
+            try {
+                // Get face center using mass properties
+                GProp_GProps props;
+                BRepGProp::SurfaceProperties(face, props);
+                gp_Pnt center = props.CentreOfMass();
+                info.point = Vector::From(center.X(), center.Y(), center.Z());
+
+                // Get face normal at center point
+                BRepAdaptor_Surface surface(face);
+                Standard_Real u = (surface.FirstUParameter() + surface.LastUParameter()) / 2.0;
+                Standard_Real v = (surface.FirstVParameter() + surface.LastVParameter()) / 2.0;
+                gp_Pnt pnt;
+                gp_Vec du, dv;
+                surface.D1(u, v, pnt, du, dv);
+                gp_Vec normal = du.Crossed(dv);
+                if(normal.Magnitude() > Precision::Confusion()) {
+                    normal.Normalize();
+                    // Adjust for face orientation
+                    if(face.Orientation() == TopAbs_REVERSED) {
+                        normal.Reverse();
+                    }
+                    info.normal = Vector::From(normal.X(), normal.Y(), normal.Z());
+                } else {
+                    info.normal = Vector::From(0, 0, 1);  // Fallback
+                }
+
+                faces[faceIndex] = info;
+            } catch(const Standard_Failure &) {
+                // Skip faces that can't be processed
+            }
+        }
+
+        explorer.Next();
+        faceIndex++;
+    }
+
+    return (int)faces.size();
 }
 
 void SolidModelOcc::MakeEdgesInto(SEdgeList *sel) const {
@@ -508,6 +628,52 @@ void SolidModelOcc::FindSelectedEdges(const SelectionList *selection,
 template void SolidModelOcc::FindSelectedEdges(
     const List<GraphicsWindow::Selection> *selection,
     std::vector<uint32_t> *outEdges) const;
+
+// Template implementation for finding selected faces
+template<typename SelectionList>
+void SolidModelOcc::FindSelectedFaces(const SelectionList *selection,
+                                       std::vector<uint32_t> *outFaces) const {
+    if(!selection || !outFaces) return;
+    outFaces->clear();
+
+    if(shapeAcc.IsNull() || faces.empty()) return;
+
+    // Collect selected face entity handles
+    std::vector<uint32_t> selectedHandles;
+
+    for(int i = 0; i < selection->n; i++) {
+        const auto &sel = (*selection)[i];
+        if(sel.entity.v == 0) continue;
+
+        Entity *e = SK.entity.FindByIdNoOops(sel.entity);
+        if(!e) continue;
+
+        // Check if this is a face entity (FACE_OCC or other face types)
+        if(e->IsFace()) {
+            selectedHandles.push_back(sel.entity.v);
+        }
+    }
+
+    if(selectedHandles.empty()) return;
+
+    // Match selected handles against extracted faces
+    for(const auto &kv : faces) {
+        uint32_t faceIndex = kv.first;
+        const FaceInfo &info = kv.second;
+
+        for(uint32_t handle : selectedHandles) {
+            if(info.entityHandle == handle) {
+                outFaces->push_back(faceIndex);
+                break;
+            }
+        }
+    }
+}
+
+// Explicit instantiation for List<GraphicsWindow::Selection>
+template void SolidModelOcc::FindSelectedFaces(
+    const List<GraphicsWindow::Selection> *selection,
+    std::vector<uint32_t> *outFaces) const;
 
 //-----------------------------------------------------------------------------
 // STEP/BREP/IGES Export

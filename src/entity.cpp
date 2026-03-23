@@ -755,6 +755,8 @@ bool EntityBase::IsFace() const {
         case Type::FACE_N_ROT_AA:
         case Type::FACE_ROT_NORMAL_PT:
         case Type::FACE_N_ROT_AXIS_TRANS:
+        case Type::FACE_N_MIRROR:
+        case Type::FACE_OCC:
             return true;
         default:
             return false;
@@ -786,6 +788,10 @@ ExprVector EntityBase::FaceGetNormalExprs() const {
         r = ExprVector::From(numNormal.vx, numNormal.vy, numNormal.vz);
         ExprQuaternion q = GetAxisAngleQuaternionExprs(3);
         r = q.Rotate(r);
+    } else if(type == Type::FACE_OCC) {
+        // OCC face: normal stored directly in numNormal.v{x,y,z}
+        r = ExprVector::From(numNormal.vx, numNormal.vy, numNormal.vz);
+        r = r.WithMagnitude(Expr::From(1.0));
     } else ssassert(false, "Unexpected entity type");
     return r;
 }
@@ -816,6 +822,9 @@ Vector EntityBase::FaceGetNormalNum() const {
         // Reflect: N' = N - 2*(N·M)*M
         double d = r.Dot(mirrorNormal);
         r = r.Minus(mirrorNormal.ScaledBy(2 * d));
+    } else if(type == Type::FACE_OCC) {
+        // OCC face: normal stored directly in numNormal.v{x,y,z}
+        r = Vector::From(numNormal.vx, numNormal.vy, numNormal.vz);
     } else ssassert(false, "Unexpected entity type");
     return r.WithMagnitude(1);
 }
@@ -862,6 +871,9 @@ ExprVector EntityBase::FaceGetPointExprs() const {
         // P' = P - 2 * ((P - O) · N) * N
         Expr *d = r.Minus(mirrorOrigin).Dot(mirrorNormal);
         r = r.Minus(mirrorNormal.ScaledBy(d->Times(Expr::From(2.0))));
+    } else if(type == Type::FACE_OCC) {
+        // OCC face: point stored directly in numPoint
+        r = ExprVector::From(numPoint);
     } else ssassert(false, "Unexpected entity type");
     return r;
 }
@@ -901,6 +913,9 @@ Vector EntityBase::FaceGetPointNum() const {
         // P' = P - 2 * ((P - O) · N) * N
         double d = (numPoint.Minus(mirrorOrigin)).Dot(mirrorNormal);
         r = numPoint.Minus(mirrorNormal.ScaledBy(2 * d));
+    } else if(type == Type::FACE_OCC) {
+        // OCC face: point stored directly in numPoint
+        r = numPoint;
     } else ssassert(false, "Unexpected entity type");
     return r;
 }

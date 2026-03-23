@@ -531,6 +531,15 @@ public:
     static void ScreenChangeLoftSecondProfile(int link, uint32_t v);
     static void ScreenSelectLoftProfile(int link, uint32_t v);
     static void ScreenSelectSweepPath(int link, uint32_t v);
+    static void ScreenChangeHoleDiameter(int link, uint32_t v);
+    static void ScreenChangeHoleDepth(int link, uint32_t v);
+    static void ScreenChangeHoleType(int link, uint32_t v);
+    static void ScreenChangeThreadPitch(int link, uint32_t v);
+    static void ScreenChangeThreadAngle(int link, uint32_t v);
+    static void ScreenChangeCboreDiameter(int link, uint32_t v);
+    static void ScreenChangeCboreDepth(int link, uint32_t v);
+    static void ScreenChangeCsinkDiameter(int link, uint32_t v);
+    static void ScreenChangeCsinkAngle(int link, uint32_t v);
     static void ScreenChangeEdgeSelection(int link, uint32_t v);
     static void ScreenSelectAllEdges(int link, uint32_t v);
     static void ScreenClearEdgeSelection(int link, uint32_t v);

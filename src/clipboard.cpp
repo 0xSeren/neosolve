@@ -86,6 +86,8 @@ void GraphicsWindow::CopySelection() {
         if(!s->entity.v) continue;
         // Work only on entities that have requests that will generate them.
         Entity *e = SK.GetEntity(s->entity);
+        // Skip OCC faces - they can't be copied
+        if(e->type == Entity::Type::FACE_OCC) continue;
         bool hasDistance;
         Request::Type req;
         int pts;
