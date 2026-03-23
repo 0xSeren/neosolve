@@ -235,8 +235,7 @@ public:
         WORKPLANE_BY_POINT_ORTHO   = 6000,
         WORKPLANE_BY_LINE_SEGMENTS = 6001,
         WORKPLANE_BY_POINT_NORMAL  = 6002,
-        //WORKPLANE_BY_POINT_FACE    = 6003,
-        //WORKPLANE_BY_FACE          = 6004,
+        WORKPLANE_BY_POINT_FACE    = 6003,
         // For extrudes, translates, and rotates
         ONE_SIDED                  = 7000,
         TWO_SIDED                  = 7001,
@@ -282,6 +281,9 @@ public:
     // For fillet/chamfer operations: indices of selected edges
     std::vector<uint32_t> selectedEdges;
     double filletRadius = 1.0;  // mm
+
+    // For shell operations: indices of selected faces to remove
+    std::vector<uint32_t> selectedFaces;
 
     // Source solid edges for selection (populated for fillet/chamfer groups)
     struct SourceEdge {
@@ -348,6 +350,8 @@ public:
         REMAP_PT_TO_ARC    = 1008,
         REMAP_PT_TO_NORMAL = 1009,
         REMAP_LATHE_ARC_CENTER = 1010,
+        // OCC face entities start at a high offset to avoid collision with step/repeat indices
+        REMAP_OCC_FACE_BASE    = 2000,
     };
     hEntity Remap(hEntity in, int copyNumber);
     void MakeExtrusionLines(EntityList *el, hEntity in);
@@ -382,6 +386,9 @@ public:
     template<class T> void GenerateForStepAndRepeat(T *steps, T *outs, Group::CombineAs forWhat);
     template<class T> void GenerateForBoolean(T *a, T *b, T *o, Group::CombineAs how);
     void GenerateDisplayItems();
+#ifdef HAVE_OPENCASCADE
+    void CreateOccFaceEntities(EntityList *el);
+#endif
 
     enum class DrawMeshAs { DEFAULT, HOVERED, SELECTED };
     void DrawMesh(DrawMeshAs how, Canvas *canvas);
@@ -483,6 +490,7 @@ public:
         FACE_ROT_NORMAL_PT     =  5005,
         FACE_N_ROT_AXIS_TRANS  =  5006,
         FACE_N_MIRROR          =  5007,
+        FACE_OCC               =  5008,  // OCC face: numPoint=center, numNormal.v{x,y,z}=normal
 
         WORKPLANE              = 10000,
         LINE_SEGMENT           = 11000,

@@ -26,6 +26,25 @@ class GraphicsWindow;
 
 class SolidModelOcc {
 public:
+    // OCC face handles use bit 31 to distinguish from regular entity handles
+    // The lower bits contain the face index
+    static constexpr uint32_t OCC_FACE_HANDLE_BIT = 0x80000000;
+
+    // Check if a handle is an OCC face handle
+    static bool IsOccFaceHandle(uint32_t handle) {
+        return (handle & OCC_FACE_HANDLE_BIT) != 0;
+    }
+
+    // Get face index from an OCC face handle
+    static uint32_t GetFaceIndex(uint32_t handle) {
+        return handle & ~OCC_FACE_HANDLE_BIT;
+    }
+
+    // Make an OCC face handle from a face index
+    static uint32_t MakeOccFaceHandle(uint32_t faceIndex) {
+        return OCC_FACE_HANDLE_BIT | faceIndex;
+    }
+
     // The shape from the current operation (extrude, revolve, etc.)
     TopoDS_Shape shape;
 
@@ -47,6 +66,24 @@ public:
     };
     std::map<uint32_t, EdgeInfo> edges;
 
+    // Face information for selection (sketch on face, constraints)
+    struct FaceInfo {
+        uint32_t entityHandle;  // SolveSpace entity handle for this face
+        Vector point;           // A point on the face (center)
+        Vector normal;          // Face normal (outward)
+    };
+    std::map<uint32_t, FaceInfo> faces;  // Maps face index to face info
+
+    // Get face info by OCC face handle, returns false if not found
+    bool GetFaceInfoByHandle(uint32_t handle, FaceInfo *info) const {
+        if(!IsOccFaceHandle(handle)) return false;
+        uint32_t faceIndex = GetFaceIndex(handle);
+        auto it = faces.find(faceIndex);
+        if(it == faces.end()) return false;
+        if(info) *info = it->second;
+        return true;
+    }
+
     // Constructor/destructor for proper memory management
     SolidModelOcc() = default;
     ~SolidModelOcc() { displayMesh.Clear(); }
@@ -64,6 +101,9 @@ public:
 
     // Extract edges from shapeAcc for selection/display
     void ExtractEdges();
+
+    // Extract faces from shapeAcc for selection/constraints
+    int ExtractFaces();
 
     // Clear all data
     void Clear();
@@ -132,6 +172,11 @@ public:
     // Stores matching edge indices in outEdges
     template<typename SelectionList>
     void FindSelectedEdges(const SelectionList *selection, std::vector<uint32_t> *outEdges) const;
+
+    // Find which OCC faces match the selected face entities
+    // Stores matching face indices in outFaces
+    template<typename SelectionList>
+    void FindSelectedFaces(const SelectionList *selection, std::vector<uint32_t> *outFaces) const;
 
 private:
     // Cache for imported solids (keyed by absolute file path)

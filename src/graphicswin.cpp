@@ -327,6 +327,8 @@ bool GraphicsWindow::KeyboardEvent(Platform::KeyboardEvent event) {
                 Selection *s = &(selection[i]);
                 if(s->entity.v) {
                     Entity *e = SK.entity.FindById(s->entity);
+                    // Skip faces - they can't be nudged
+                    if(e->IsFace()) continue;
                     if(e->IsPoint()) {
                         points.Add(&(e->h));
                     } else {

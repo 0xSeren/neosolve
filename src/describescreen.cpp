@@ -95,10 +95,17 @@ void TextWindow::DescribeSelection() {
     auto ListFaces = [&]() {
         char abc = 'A';
         for(auto &fc : gs.face) {
-            Vector n = SK.GetEntity(fc)->FaceGetNormalNum();
-            Printf(true, " plane%c normal = " PT_AS_NUM, abc, CO(n));
-            Vector p = SK.GetEntity(fc)->FaceGetPointNum();
-            Printf(false, "   plane%c thru = " PT_AS_STR, abc, COSTR(SK.GetEntity(fc), p));
+            Entity *e = SK.GetEntity(fc);
+            Vector n = e->FaceGetNormalNum();
+            Vector p = e->FaceGetPointNum();
+            // OCC faces use numeric display, native faces use entity reference display
+            if(e->type == Entity::Type::FACE_OCC) {
+                Printf(true, " face%c normal = " PT_AS_NUM, abc, CO(n));
+                Printf(false, "   face%c thru = " PT_AS_NUM, abc, CO(p));
+            } else {
+                Printf(true, " plane%c normal = " PT_AS_NUM, abc, CO(n));
+                Printf(false, "   plane%c thru = " PT_AS_STR, abc, COSTR(e, p));
+            }
             ++abc;
         }
     };
@@ -380,10 +387,15 @@ void TextWindow::DescribeSelection() {
         Printf(false, "%FtA POINT AND A PLANE FACE");
         Vector pt = SK.GetEntity(gs.point[0])->PointGetNum();
         Printf(true,  "        point = " PT_AS_STR, COSTR(SK.GetEntity(gs.point[0]), pt));
-        Vector n = SK.GetEntity(gs.face[0])->FaceGetNormalNum();
+        Entity *faceEnt = SK.GetEntity(gs.face[0]);
+        Vector n = faceEnt->FaceGetNormalNum();
+        Vector pl = faceEnt->FaceGetPointNum();
         Printf(true,  " plane normal = " PT_AS_NUM, CO(n));
-        Vector pl = SK.GetEntity(gs.face[0])->FaceGetPointNum();
-        Printf(false, "   plane thru = " PT_AS_STR, COSTR(SK.GetEntity(gs.face[0]), pl));
+        if(faceEnt->type == Entity::Type::FACE_OCC) {
+            Printf(false, "   plane thru = " PT_AS_NUM, CO(pl));
+        } else {
+            Printf(false, "   plane thru = " PT_AS_STR, COSTR(faceEnt, pl));
+        }
         double dd = n.Dot(pl) - n.Dot(pt);
         Printf(true,  "     distance = %Fi%s", SS.MmToString(dd).c_str());
     } else if(gs.n == 3 && gs.points == 2 && gs.vectors == 1) {

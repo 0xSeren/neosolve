@@ -158,6 +158,9 @@ void Group::MenuGroup(Command id, Platform::Path linkFile) {
                     } else if(wrkplg->subtype == Subtype::WORKPLANE_BY_POINT_NORMAL) {
                         g.predef.q = wrkplg->predef.q;
                         g.predef.entityB = wrkplg->predef.entityB;
+                    } else if(wrkplg->subtype == Subtype::WORKPLANE_BY_POINT_FACE) {
+                        g.predef.q = wrkplg->predef.q;
+                        g.predef.entityB = wrkplg->predef.entityB;
                     } else ssassert(false, "Unexpected workplane subtype");
                 }
             } else if(gs.anyNormals == 1 && gs.points == 1 && gs.n == 2) {
@@ -165,10 +168,55 @@ void Group::MenuGroup(Command id, Platform::Path linkFile) {
                 g.predef.entityB = gs.anyNormal[0];
                 g.predef.q      = SK.GetEntity(gs.anyNormal[0])->NormalGetNum();
                 g.predef.origin = gs.point[0];
-            //} else if(gs.faces == 1 && gs.points == 1 && gs.n == 2) {
-            //    g.subtype = Subtype::WORKPLANE_BY_POINT_FACE;
-            //    g.predef.q      = SK.GetEntity(gs.face[0])->NormalGetNum();
-            //    g.predef.origin = gs.point[0];
+            } else if(gs.faces == 1 && gs.points == 1 && gs.n == 2) {
+                Entity *faceEntity = SK.GetEntity(gs.face[0]);
+                Vector faceNormal = faceEntity->FaceGetNormalNum();
+                // For OCC faces, use WORKPLANE_BY_POINT_ORTHO since they're dynamically generated
+                if(faceEntity->type == Entity::Type::FACE_OCC) {
+                    g.subtype = Subtype::WORKPLANE_BY_POINT_ORTHO;
+                    if(faceNormal.Magnitude() > LENGTH_EPS) {
+                        Vector n = faceNormal.WithMagnitude(1);
+                        Vector arbitrary = (fabs(n.x) < 0.9) ? Vector::From(1, 0, 0) : Vector::From(0, 1, 0);
+                        Vector u = arbitrary.Cross(n).WithMagnitude(1);
+                        Vector v = n.Cross(u).WithMagnitude(1);
+                        g.predef.q = Quaternion::From(u, v);
+                    } else {
+                        g.predef.q = Quaternion::From(1, 0, 0, 0);
+                    }
+                    g.predef.origin = gs.point[0];
+                } else {
+                    g.subtype = Subtype::WORKPLANE_BY_POINT_FACE;
+                    g.predef.entityB = gs.face[0];
+                    g.predef.q      = faceNormal.Equals(Vector::From(0, 0, 0)) ?
+                                      Quaternion::From(1, 0, 0, 0) :
+                                      Quaternion::From(Vector::From(0, 0, 1), faceNormal);
+                    g.predef.origin = gs.point[0];
+                }
+            } else if(gs.faces == 1 && gs.n == 1) {
+                // Just a face selected - use face center as origin
+                Entity *faceEntity = SK.GetEntity(gs.face[0]);
+                Vector faceNormal = faceEntity->FaceGetNormalNum();
+                Vector facePoint = faceEntity->FaceGetPointNum();
+
+                // Create a datum point at the face center
+                SS.GW.ClearSelection();
+                hRequest hr = SS.GW.AddRequest(Request::Type::DATUM_POINT, /*rememberForUndo=*/false);
+                Request *req = SK.GetRequest(hr);
+                req->construction = true;
+                req->workplane = Entity::FREE_IN_3D;
+                SK.GetEntity(hr.entity(0))->PointForceTo(facePoint);
+
+                g.subtype = Subtype::WORKPLANE_BY_POINT_ORTHO;
+                if(faceNormal.Magnitude() > LENGTH_EPS) {
+                    Vector n = faceNormal.WithMagnitude(1);
+                    Vector arbitrary = (fabs(n.x) < 0.9) ? Vector::From(1, 0, 0) : Vector::From(0, 1, 0);
+                    Vector u = arbitrary.Cross(n).WithMagnitude(1);
+                    Vector v = n.Cross(u).WithMagnitude(1);
+                    g.predef.q = Quaternion::From(u, v);
+                } else {
+                    g.predef.q = Quaternion::From(1, 0, 0, 0);
+                }
+                g.predef.origin = hr.entity(0);
             } else {
                 Error(_("Bad selection for new sketch in workplane. This "
                         "group can be created with:\n\n"
@@ -177,8 +225,9 @@ void Group::MenuGroup(Command id, Platform::Path linkFile) {
                         "parallel to the lines)\n"
                         "    * a point and a normal (through the point, "
                         "orthogonal to the normal)\n"
-                        /*"    * a point and a face (through the point, "
-                        "parallel to the face)\n"*/
+                        "    * a point and a face (through the point, "
+                        "parallel to the face)\n"
+                        "    * a face (at face center, parallel to the face)\n"
                         "    * a workplane (copy of the workplane)\n"));
                 return;
             }
@@ -293,6 +342,8 @@ void Group::MenuGroup(Command id, Platform::Path linkFile) {
             g.opA = SS.GW.activeGroup;
             g.valA = 1.0;  // default wall thickness in mm
             g.name = C_("group-name", "shell");
+            // Capture selected faces to remove (optional - auto-selects largest if none)
+            prevg->runningSolidModel->FindSelectedFaces(&SS.GW.selection, &g.selectedFaces);
             break;
         }
 
@@ -324,6 +375,7 @@ void Group::MenuGroup(Command id, Platform::Path linkFile) {
             g.name = C_("group-name", "sweep");
             break;
         }
+
 #endif
 
         case Command::GROUP_HELIX:
@@ -587,6 +639,14 @@ void Group::Generate(EntityList *entity, ParamList *param)
                 q = predef.q;
             } else if(subtype == Subtype::WORKPLANE_BY_POINT_NORMAL) {
                 q = SK.GetEntity(predef.entityB)->NormalGetNum();
+            } else if(subtype == Subtype::WORKPLANE_BY_POINT_FACE) {
+                // Get normal from face and construct quaternion
+                Vector n = SK.GetEntity(predef.entityB)->FaceGetNormalNum();
+                if(n.Equals(Vector::From(0, 0, 0))) {
+                    q = Quaternion::From(1, 0, 0, 0);
+                } else {
+                    q = Quaternion::From(Vector::From(0, 0, 1), n);
+                }
             } else ssassert(false, "Unexpected workplane subtype");
 
             Entity normal = {};
@@ -1370,6 +1430,7 @@ void Group::CopyEntity(EntityList *el,
         case Entity::Type::FACE_ROT_NORMAL_PT:
         case Entity::Type::FACE_N_ROT_AXIS_TRANS:
         case Entity::Type::FACE_N_MIRROR:
+        case Entity::Type::FACE_OCC:
             if(as == CopyAs::N_TRANS) {
                 en.type = Entity::Type::FACE_N_TRANS;
                 en.param[0] = dx;

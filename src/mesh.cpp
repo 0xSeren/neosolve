@@ -360,6 +360,28 @@ uint32_t SMesh::FirstIntersectionWith(Point2d mp) const {
     return face;
 }
 
+bool SMesh::IntersectionWith(Point2d mp, Vector *intersect) const {
+    Vector rayPoint = SS.GW.UnProjectPoint3(Vector::From(mp.x, mp.y, 0.0));
+    Vector rayDir = SS.GW.UnProjectPoint3(Vector::From(mp.x, mp.y, 1.0)).Minus(rayPoint);
+
+    bool found = false;
+    double bestT = VERY_NEGATIVE;
+    for(int i = 0; i < l.n; i++) {
+        const STriangle &tr = l[i];
+
+        double t;
+        Vector pt;
+        if(!tr.Raytrace(rayPoint, rayDir, &t, &pt)) continue;
+        if(t > bestT) {
+            bestT = t;
+            found = true;
+            if(intersect) *intersect = pt;
+        }
+    }
+
+    return found;
+}
+
 Vector SMesh::GetCenterOfMass() const {
     Vector center = {};
     double vol = 0.0;
