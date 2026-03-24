@@ -222,6 +222,30 @@ public:
             case KeyboardEvent::Key::FUNCTION:
                 accelChar = NSF1FunctionKey + accel.num - 1;
                 break;
+
+            case KeyboardEvent::Key::PAGE_UP:
+                accelChar = NSPageUpFunctionKey;
+                break;
+
+            case KeyboardEvent::Key::PAGE_DOWN:
+                accelChar = NSPageDownFunctionKey;
+                break;
+
+            case KeyboardEvent::Key::ARROW_UP:
+                accelChar = NSUpArrowFunctionKey;
+                break;
+
+            case KeyboardEvent::Key::ARROW_DOWN:
+                accelChar = NSDownArrowFunctionKey;
+                break;
+
+            case KeyboardEvent::Key::ARROW_LEFT:
+                accelChar = NSLeftArrowFunctionKey;
+                break;
+
+            case KeyboardEvent::Key::ARROW_RIGHT:
+                accelChar = NSRightArrowFunctionKey;
+                break;
         }
         nsMenuItem.keyEquivalent = [[NSString alloc] initWithCharacters:&accelChar length:1];
 
