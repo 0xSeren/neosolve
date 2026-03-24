@@ -1605,9 +1605,7 @@ void Group::GenerateDisplayItems() {
             {
 #endif
                 runningShell.TriangulateInto(&displayMesh);
-#ifdef HAVE_OPENCASCADE
             }
-#endif
 
             STriangle *t;
             for(t = runningMesh.l.First(); t; t = runningMesh.l.NextAfter(t)) {

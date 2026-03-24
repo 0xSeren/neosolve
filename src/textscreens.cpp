@@ -414,6 +414,7 @@ void TextWindow::ScreenSelectSweepPath(int link, uint32_t v) {
         SS.ScheduleShowTW();
     }
 }
+#ifdef HAVE_OPENCASCADE
 void TextWindow::ScreenChangeEdgeSelection(int link, uint32_t v) {
     Group *g = SK.GetGroup(SS.TW.shown.group);
 
@@ -439,6 +440,7 @@ void TextWindow::ScreenClearEdgeSelection(int link, uint32_t v) {
     SS.MarkGroupDirty(g->h);
     SS.ScheduleShowTW();
 }
+#endif
 void TextWindow::ScreenChangeGroupName(int link, uint32_t v) {
     Group *g = SK.GetGroup(SS.TW.shown.group);
     SS.TW.ShowEditControl(12, g->DescriptionString().substr(5));
@@ -1181,6 +1183,7 @@ void TextWindow::EditControlDone(std::string s) {
             }
             break;
 
+#ifdef HAVE_OPENCASCADE
         case Edit::EDGE_SELECTION: {
             SS.UndoRemember();
             Group *g = SK.GetGroup(edit.group);
@@ -1215,6 +1218,7 @@ void TextWindow::EditControlDone(std::string s) {
             SS.MarkGroupDirty(g->h);
             break;
         }
+#endif
 
         case Edit::GROUP_NAME:
             if(s.empty()) {

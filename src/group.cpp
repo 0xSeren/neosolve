@@ -1005,7 +1005,6 @@ void Group::Generate(EntityList *entity, ParamList *param)
             }
             return;
 
-#ifdef HAVE_OPENCASCADE
         case Type::FILLET:
         case Type::CHAMFER:
         case Type::SHELL:
@@ -1015,6 +1014,7 @@ void Group::Generate(EntityList *entity, ParamList *param)
             return;
 
         case Type::IMPORT_SOLID:
+#ifdef HAVE_OPENCASCADE
             // Translation vector for positioning the imported solid
             AddParam(param, h.param(0), gp.x);
             AddParam(param, h.param(1), gp.y);
@@ -1033,8 +1033,8 @@ void Group::Generate(EntityList *entity, ParamList *param)
                     h.param(3), h.param(4), h.param(5), h.param(6), NO_PARAM,
                     CopyAs::N_ROT_TRANS);
             }
-            return;
 #endif
+            return;
     }
     ssassert(false, "Unexpected group type");
 }
