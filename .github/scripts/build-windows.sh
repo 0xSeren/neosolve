@@ -20,8 +20,9 @@ if [ "$1" = "release" ]; then
     cmake \
         -G "Visual Studio 17 2022" \
         -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
+        -DCMAKE_TOOLCHAIN_FILE="/c/vcpkg/scripts/buildsystems/vcpkg.cmake" \
         -DENABLE_OPENMP="${ENABLE_OPENMP}" \
-        -DUSE_OPENCASCADE=OFF \
+        -DUSE_OPENCASCADE="ON" \
         -DENABLE_LTO=ON \
         -DCMAKE_GENERATOR_PLATFORM="${PLATFORM}" \
         ..
@@ -30,8 +31,9 @@ else
     cmake \
         -G "Visual Studio 17 2022" \
         -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
+        -DCMAKE_TOOLCHAIN_FILE="/c/vcpkg/scripts/buildsystems/vcpkg.cmake" \
         -DENABLE_OPENMP="ON" \
-        -DUSE_OPENCASCADE=OFF \
+        -DUSE_OPENCASCADE="ON" \
         -DENABLE_SANITIZERS="ON" \
         -DCMAKE_GENERATOR_PLATFORM="Win32" \
         ..

@@ -39,7 +39,7 @@ cmake \
     -D ENABLE_OPENMP="ON" \
     -D ENABLE_SANITIZERS="${ENABLE_SANITIZERS}" \
     -D ENABLE_LTO="${ENABLE_LTO}" \
-    -D USE_OPENCASCADE=OFF \
+    -D USE_OPENCASCADE="ON" \
     ..
 
 if [ "$3" = "xcode" ]; then

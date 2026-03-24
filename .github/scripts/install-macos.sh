@@ -1,6 +1,8 @@
 #!/bin/sh -xe
 set -o pipefail
 
+brew install opencascade
+
 if [ "$1" = "ci" ]; then
     brew_cache=$(brew --cache)
     brew fetch --bottle-tag=arm64_tahoe libomp >/dev/null
