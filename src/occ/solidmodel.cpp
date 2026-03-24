@@ -841,7 +841,6 @@ SolidModelOcc SolidModelOcc::ImportCached(const Platform::Path &path, bool *succ
         std::lock_guard<std::mutex> lock(importCacheMutex);
         auto it = importCache.find(pathStr);
         if(it != importCache.end()) {
-            dbp("Using cached import for %s", pathStr.c_str());
             result.shape = it->second.shape;
             result.shapeAcc = it->second.shape;
             result.displayMesh.MakeFromCopyOf(it->second.displayMesh.get());
@@ -872,14 +871,11 @@ SolidModelOcc SolidModelOcc::ImportCached(const Platform::Path &path, bool *succ
         cached.edges = result.edges;
         result.GetBoundingBox(&cached.bboxMin, &cached.bboxMax);
 
-        int numTriangles = result.displayMesh.l.n;
-
-        // Add to cache (with lock) - use emplace with move since CachedImport is non-copyable
+        // Add to cache (with lock)
         {
             std::lock_guard<std::mutex> lock(importCacheMutex);
             importCache.emplace(pathStr, std::move(cached));
         }
-        dbp("Cached import for %s (mesh: %d triangles)", pathStr.c_str(), numTriangles);
     }
 
     return result;
@@ -925,7 +921,6 @@ bool SolidModelOcc::GetCachedEdgesInto(const Platform::Path &path, SEdgeList *se
 
 void SolidModelOcc::ClearImportCache() {
     importCache.clear();
-    dbp("Cleared import cache");
 }
 
 // Static storage for async imports
@@ -961,7 +956,6 @@ void SolidModelOcc::StartAsyncImport(const Platform::Path &path) {
     });
 
     asyncImports[pathStr] = std::move(state);
-    dbp("Started async import for %s", pathStr.c_str());
 }
 
 bool SolidModelOcc::IsImportInProgress(const Platform::Path &path) {
