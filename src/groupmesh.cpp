@@ -862,14 +862,10 @@ void Group::GenerateShellAndMesh() {
             *thisSolidModel = SolidModelOcc::ImportCached(linkFile, &success);
 
             if(success) {
-                dbp("Loaded solid from %s", linkFile.raw.c_str());
-
                 // Create bounding box reference entities for constraining
                 Vector minPt = {}, maxPt = {};
                 thisSolidModel->GetBoundingBox(&minPt, &maxPt);
                 CreateBoundingBoxEntities(&impEntity, minPt, maxPt);
-                dbp("Created bounding box entities: min=(%f,%f,%f), max=(%f,%f,%f)",
-                    minPt.x, minPt.y, minPt.z, maxPt.x, maxPt.y, maxPt.z);
             } else {
                 Error("Failed to import solid from '%s'", linkFile.raw.c_str());
             }
@@ -1137,10 +1133,7 @@ void Group::GenerateShellAndMesh() {
                 loftBuilder.Build();
 
                 if(loftBuilder.IsDone()) {
-                    dbp("OCC loft created successfully");
                     thisSolidModel->shape = loftBuilder.Shape();
-                } else {
-                    dbp("OCC loft creation failed");
                 }
             } catch(const Standard_Failure &e) {
                 dbp("OCC loft failed: %s", e.GetMessageString());
@@ -1154,14 +1147,7 @@ void Group::GenerateShellAndMesh() {
         Group *pathGroup = SK.GetGroup(opA);      // The path to sweep along
         Group *profileGroup = SK.GetGroup(opB);  // The profile to sweep
 
-        dbp("OCC sweep: path=%d, profile=%d", opA.v, opB.v);
-
         if(profileGroup && pathGroup) {
-            dbp("OCC sweep: profileError=%d, pathError=%d, profileLoops=%d, pathLoops=%d, profileOpens=%d, pathOpens=%d",
-                (int)profileGroup->polyError.how, (int)pathGroup->polyError.how,
-                profileGroup->bezierLoops.l.n, pathGroup->bezierLoops.l.n,
-                profileGroup->bezierOpens.l.n, pathGroup->bezierOpens.l.n);
-
             try {
                 // Get the path wire - try closed loops first, then open paths
                 TopoDS_Wire pathWire;
@@ -1172,7 +1158,6 @@ void Group::GenerateShellAndMesh() {
                     FaceBuilder fb = FaceBuilder::FromBezierLoopSet(sbls);
                     if(fb.IsValid()) {
                         pathWire = fb.GetOuterWire();
-                        dbp("OCC sweep: using closed path loop");
                         break;
                     }
                 }
@@ -1189,14 +1174,11 @@ void Group::GenerateShellAndMesh() {
                     }
                     if(sbl.l.n > 0) {
                         pathWire = FaceBuilder::WireFromBezierList(&sbl, pathGroup->bezierOpens.normal);
-                        dbp("OCC sweep: using open path with %d beziers", sbl.l.n);
                     }
                     sbl.l.Clear();
                 }
 
-                if(pathWire.IsNull()) {
-                    dbp("OCC sweep failed: invalid path wire (no closed or open paths found)");
-                } else {
+                if(!pathWire.IsNull()) {
                     // Create pipe shell builder with the path
                     BRepOffsetAPI_MakePipeShell pipeBuilder(pathWire);
 
@@ -1208,7 +1190,6 @@ void Group::GenerateShellAndMesh() {
                         FaceBuilder fb = FaceBuilder::FromBezierLoopSet(sbls);
                         if(fb.IsValid()) {
                             profileWire = fb.GetOuterWire();
-                            dbp("OCC sweep: using closed profile loop");
                             break;
                         }
                     }
@@ -1224,7 +1205,6 @@ void Group::GenerateShellAndMesh() {
                         }
                         if(sbl.l.n > 0) {
                             profileWire = FaceBuilder::WireFromBezierList(&sbl, profileGroup->bezierOpens.normal);
-                            dbp("OCC sweep: using open profile with %d beziers", sbl.l.n);
                         }
                         sbl.l.Clear();
                     }
@@ -1232,22 +1212,13 @@ void Group::GenerateShellAndMesh() {
                     if(!profileWire.IsNull()) {
                         // Add profile: WithContact=true positions profile at path start,
                         // WithCorrection=true rotates to be orthogonal to path
-                        // This is standard CAD behavior - sweep starts at path's beginning
                         pipeBuilder.Add(profileWire, Standard_True, Standard_True);
-                        dbp("OCC sweep: added profile wire");
-
                         pipeBuilder.Build();
 
                         if(pipeBuilder.IsDone()) {
-                            // Make it solid by capping the ends
                             pipeBuilder.MakeSolid();
-                            dbp("OCC sweep created successfully");
                             thisSolidModel->shape = pipeBuilder.Shape();
-                        } else {
-                            dbp("OCC sweep creation failed: Build() not done");
                         }
-                    } else {
-                        dbp("OCC sweep failed: no valid profile wire");
                     }
                 }
             } catch(const Standard_Failure &e) {
