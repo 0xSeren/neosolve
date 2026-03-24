@@ -3,9 +3,6 @@
 mkdir build
 cd build
 
-# Use vcpkg toolchain for dependencies
-VCPKG_ROOT="${VCPKG_INSTALLATION_ROOT:-/c/vcpkg}"
-
 if [ "$1" = "release" ]; then
     if [ "$2" = "openmp" ]; then
         ENABLE_OPENMP="ON"
@@ -14,20 +11,17 @@ if [ "$1" = "release" ]; then
     fi
 
     if [ "$3" = "x64" ]; then
-        PLATFORM="x64"
-        VCPKG_TRIPLET="x64-windows"
+        PLATFORM="$3"
     else
         PLATFORM="Win32"
-        VCPKG_TRIPLET="x86-windows"
     fi
 
     BUILD_TYPE=RelWithDebInfo
     cmake \
         -G "Visual Studio 17 2022" \
         -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
-        -DCMAKE_TOOLCHAIN_FILE="${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" \
-        -DVCPKG_TARGET_TRIPLET="${VCPKG_TRIPLET}" \
         -DENABLE_OPENMP="${ENABLE_OPENMP}" \
+        -DUSE_OPENCASCADE=OFF \
         -DENABLE_LTO=ON \
         -DCMAKE_GENERATOR_PLATFORM="${PLATFORM}" \
         ..
@@ -36,9 +30,8 @@ else
     cmake \
         -G "Visual Studio 17 2022" \
         -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
-        -DCMAKE_TOOLCHAIN_FILE="${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" \
-        -DVCPKG_TARGET_TRIPLET="x86-windows" \
         -DENABLE_OPENMP="ON" \
+        -DUSE_OPENCASCADE=OFF \
         -DENABLE_SANITIZERS="ON" \
         -DCMAKE_GENERATOR_PLATFORM="Win32" \
         ..

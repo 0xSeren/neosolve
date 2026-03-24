@@ -1,6 +1,6 @@
 #!/bin/sh -xe
 
-# Install OpenCASCADE via vcpkg (pre-installed on GitHub Actions)
-vcpkg install opencascade:x86-windows opencascade:x64-windows
+# Note: OpenCASCADE on Windows requires vcpkg and takes ~30 min to build
+# Disabled for now - Windows builds don't include OCC features
 
 git submodule update --init
