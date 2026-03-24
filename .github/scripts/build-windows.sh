@@ -16,22 +16,24 @@ if [ "$1" = "release" ]; then
         PLATFORM="Win32"
     fi
 
+    VCPKG_DIR="${VCPKG_INSTALLATION_ROOT:-/c/vcpkg}"
     BUILD_TYPE=RelWithDebInfo
     cmake \
         -G "Visual Studio 17 2022" \
         -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
-        -DCMAKE_TOOLCHAIN_FILE="/c/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+        -DCMAKE_TOOLCHAIN_FILE="${VCPKG_DIR}/scripts/buildsystems/vcpkg.cmake" \
         -DENABLE_OPENMP="${ENABLE_OPENMP}" \
         -DUSE_OPENCASCADE="ON" \
         -DENABLE_LTO=ON \
         -DCMAKE_GENERATOR_PLATFORM="${PLATFORM}" \
         ..
 else
+    VCPKG_DIR="${VCPKG_INSTALLATION_ROOT:-/c/vcpkg}"
     BUILD_TYPE=Debug
     cmake \
         -G "Visual Studio 17 2022" \
         -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
-        -DCMAKE_TOOLCHAIN_FILE="/c/vcpkg/scripts/buildsystems/vcpkg.cmake" \
+        -DCMAKE_TOOLCHAIN_FILE="${VCPKG_DIR}/scripts/buildsystems/vcpkg.cmake" \
         -DENABLE_OPENMP="ON" \
         -DUSE_OPENCASCADE="ON" \
         -DENABLE_SANITIZERS="ON" \
