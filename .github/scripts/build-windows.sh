@@ -3,6 +3,9 @@
 mkdir build
 cd build
 
+# Use official pre-built OpenCASCADE (x64 only)
+OCC_DIR="${OpenCASCADE_DIR:-/c/occ/opencascade-7.9.3}"
+
 if [ "$1" = "release" ]; then
     if [ "$2" = "openmp" ]; then
         ENABLE_OPENMP="ON"
@@ -10,34 +13,25 @@ if [ "$1" = "release" ]; then
         ENABLE_OPENMP="OFF"
     fi
 
-    if [ "$3" = "x64" ]; then
-        PLATFORM="$3"
-    else
-        PLATFORM="Win32"
-    fi
-
-    VCPKG_DIR="${VCPKG_INSTALLATION_ROOT:-/c/vcpkg}"
     BUILD_TYPE=RelWithDebInfo
     cmake \
         -G "Visual Studio 17 2022" \
         -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
-        -DCMAKE_TOOLCHAIN_FILE="${VCPKG_DIR}/scripts/buildsystems/vcpkg.cmake" \
+        -DCMAKE_PREFIX_PATH="${OCC_DIR}" \
         -DENABLE_OPENMP="${ENABLE_OPENMP}" \
         -DUSE_OPENCASCADE="ON" \
         -DENABLE_LTO=ON \
-        -DCMAKE_GENERATOR_PLATFORM="${PLATFORM}" \
+        -DCMAKE_GENERATOR_PLATFORM="x64" \
         ..
 else
-    VCPKG_DIR="${VCPKG_INSTALLATION_ROOT:-/c/vcpkg}"
     BUILD_TYPE=Debug
     cmake \
         -G "Visual Studio 17 2022" \
         -DCMAKE_BUILD_TYPE="${BUILD_TYPE}" \
-        -DCMAKE_TOOLCHAIN_FILE="${VCPKG_DIR}/scripts/buildsystems/vcpkg.cmake" \
+        -DCMAKE_PREFIX_PATH="${OCC_DIR}" \
         -DENABLE_OPENMP="ON" \
         -DUSE_OPENCASCADE="ON" \
-        -DENABLE_SANITIZERS="ON" \
-        -DCMAKE_GENERATOR_PLATFORM="Win32" \
+        -DCMAKE_GENERATOR_PLATFORM="x64" \
         ..
 fi
 
@@ -45,14 +39,8 @@ cmake --build . --config "${BUILD_TYPE}" -- -maxcpucount
 
 # Skip visual tests on CI - rendering differs between environments
 
-if [ "$3" = "x64" ]; then
-	if [ "$2" != "openmp" ]; then
-		mv bin/$BUILD_TYPE/solvespace.exe bin/$BUILD_TYPE/solvespace_single_core_x64.exe
-	else
-		mv bin/$BUILD_TYPE/solvespace.exe bin/$BUILD_TYPE/solvespace_x64.exe
-	fi
+if [ "$2" = "openmp" ]; then
+    mv bin/$BUILD_TYPE/solvespace.exe bin/$BUILD_TYPE/solvespace.exe
 else
-	if [ "$2" != "openmp" ]; then
-		mv bin/$BUILD_TYPE/solvespace.exe bin/$BUILD_TYPE/solvespace_single_core.exe
-	fi
+    mv bin/$BUILD_TYPE/solvespace.exe bin/$BUILD_TYPE/solvespace_single_core.exe
 fi

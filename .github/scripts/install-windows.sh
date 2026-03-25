@@ -1,16 +1,24 @@
 #!/bin/sh -xe
 
-# Install OpenCASCADE via vcpkg (vcpkg is pre-installed on GitHub Actions)
-# Use VCPKG_ROOT if set, otherwise default to C:/vcpkg
-VCPKG_DIR="${VCPKG_INSTALLATION_ROOT:-/c/vcpkg}"
+# Download official pre-built OpenCASCADE binaries (x64 only)
 
-# Update vcpkg to latest
-cd "$VCPKG_DIR"
-git pull || true
-./bootstrap-vcpkg.bat
+OCC_VERSION="7.9.3"
+OCC_URL="https://github.com/Open-Cascade-SAS/OCCT/releases/download/V7_9_3/opencascade-${OCC_VERSION}-vc14-64.zip"
+OCC_3RDPARTY_URL="https://github.com/Open-Cascade-SAS/OCCT/releases/download/V7_9_3/3rdparty-vc14-64.zip"
 
-# Install OpenCASCADE for both platforms
-./vcpkg install opencascade:x64-windows opencascade:x86-windows --clean-after-build
+mkdir -p /c/occ
+cd /c/occ
+
+echo "Downloading OpenCASCADE ${OCC_VERSION} x64 binaries..."
+curl -L -o opencascade-x64.zip "$OCC_URL"
+curl -L -o 3rdparty-x64.zip "$OCC_3RDPARTY_URL"
+
+echo "Extracting OpenCASCADE..."
+unzip -q -o opencascade-x64.zip
+unzip -q -o 3rdparty-x64.zip
+
+# Set up environment for CMake to find OpenCASCADE
+echo "OpenCASCADE_DIR=/c/occ/opencascade-${OCC_VERSION}" >> $GITHUB_ENV
 
 cd -
 git submodule update --init
