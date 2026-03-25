@@ -628,23 +628,41 @@ void GraphicsWindow::MouseRightUp(double x, double y) {
     if(isOccFace && occFaceGroup.v) {
         Vector facePoint = occFacePoint;
         Vector faceNormal = occFaceNormal;
+        hGroup faceGroup = occFaceGroup;
 
-        menu->AddItem(_("Sketch on Face"), [this, facePoint, faceNormal]() {
+        menu->AddItem(_("Sketch on Face"), [this, facePoint, faceNormal, faceGroup]() {
             ClearSelection();
             SS.UndoRemember();
 
-            // Create a datum point to serve as origin for the new workplane.
-            // Use AddRequest which properly generates the entity immediately.
-            hRequest hr = AddRequest(Request::Type::DATUM_POINT, /*rememberForUndo=*/false);
+            // Try to find a point entity in the same group that lies on this face
+            hEntity foundPoint = Entity::NO_ENTITY;
+            double bestDist = VERY_POSITIVE;
+            for(auto &e : SK.entity) {
+                if(e.group != faceGroup) continue;
+                if(!e.IsPoint()) continue;
 
-            // Make it construction and free in 3D
-            Request *req = SK.GetRequest(hr);
-            req->construction = true;
-            req->workplane = Entity::FREE_IN_3D;
+                Vector pt = e.PointGetNum();
+                // Check if point lies on the face plane
+                double dist = fabs(faceNormal.Dot(pt.Minus(facePoint)));
+                if(dist < LENGTH_EPS && dist < bestDist) {
+                    foundPoint = e.h;
+                    bestDist = dist;
+                }
+            }
 
-            // Position the datum point at the face center
-            hEntity hpt = hr.entity(0);
-            SK.GetEntity(hpt)->PointForceTo(facePoint);
+            hEntity hpt;
+            if(foundPoint != Entity::NO_ENTITY) {
+                // Found a point on the face - use it
+                hpt = foundPoint;
+            } else {
+                // No point found - create a datum point at face center
+                hRequest hr = AddRequest(Request::Type::DATUM_POINT, /*rememberForUndo=*/false);
+                Request *req = SK.GetRequest(hr);
+                req->construction = true;
+                req->workplane = Entity::FREE_IN_3D;
+                hpt = hr.entity(0);
+                SK.GetEntity(hpt)->PointForceTo(facePoint);
+            }
 
             // Now create the new sketch group
             Group g = {};

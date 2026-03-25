@@ -193,18 +193,45 @@ void Group::MenuGroup(Command id, Platform::Path linkFile) {
                     g.predef.origin = gs.point[0];
                 }
             } else if(gs.faces == 1 && gs.n == 1) {
-                // Just a face selected - use face center as origin
+                // Just a face selected - find a point on the face automatically
                 Entity *faceEntity = SK.GetEntity(gs.face[0]);
                 Vector faceNormal = faceEntity->FaceGetNormalNum();
                 Vector facePoint = faceEntity->FaceGetPointNum();
+                hGroup faceGroup = faceEntity->group;
 
-                // Create a datum point at the face center
-                SS.GW.ClearSelection();
-                hRequest hr = SS.GW.AddRequest(Request::Type::DATUM_POINT, /*rememberForUndo=*/false);
-                Request *req = SK.GetRequest(hr);
-                req->construction = true;
-                req->workplane = Entity::FREE_IN_3D;
-                SK.GetEntity(hr.entity(0))->PointForceTo(facePoint);
+                // Try to find a point entity in the same group that lies on this face
+                hEntity foundPoint = Entity::NO_ENTITY;
+                double bestDist = VERY_POSITIVE;
+                for(auto &e : SK.entity) {
+                    if(e.group != faceGroup) continue;
+                    if(!e.IsPoint()) continue;
+
+                    Vector pt = e.PointGetNum();
+                    // Check if point lies on the face plane
+                    double dist = fabs(faceNormal.Dot(pt.Minus(facePoint)));
+                    if(dist < LENGTH_EPS && dist < bestDist) {
+                        // Also check point is reasonably close to face center
+                        double lateral = pt.Minus(facePoint).Magnitude();
+                        if(lateral < 1e6) {  // Reasonable distance
+                            foundPoint = e.h;
+                            bestDist = dist;
+                        }
+                    }
+                }
+
+                if(foundPoint != Entity::NO_ENTITY) {
+                    // Found a point on the face - use it as origin
+                    g.predef.origin = foundPoint;
+                } else {
+                    // No point found - create a datum point at face center
+                    SS.GW.ClearSelection();
+                    hRequest hr = SS.GW.AddRequest(Request::Type::DATUM_POINT, /*rememberForUndo=*/false);
+                    Request *req = SK.GetRequest(hr);
+                    req->construction = true;
+                    req->workplane = Entity::FREE_IN_3D;
+                    SK.GetEntity(hr.entity(0))->PointForceTo(facePoint);
+                    g.predef.origin = hr.entity(0);
+                }
 
                 g.subtype = Subtype::WORKPLANE_BY_POINT_ORTHO;
                 if(faceNormal.Magnitude() > LENGTH_EPS) {
@@ -216,7 +243,6 @@ void Group::MenuGroup(Command id, Platform::Path linkFile) {
                 } else {
                     g.predef.q = Quaternion::From(1, 0, 0, 0);
                 }
-                g.predef.origin = hr.entity(0);
             } else {
                 Error(_("Bad selection for new sketch in workplane. This "
                         "group can be created with:\n\n"
