@@ -517,6 +517,11 @@ MenuBarRef GetOrCreateMainMenu(bool *unique) {
 //-----------------------------------------------------------------------------
 
 #define SCROLLBAR_UNIT 65536
+#define SPLITTER_WIDTH 6
+
+// Forward declarations for docking support
+class WindowImplWin32;
+class WindowImplWin32Docked;
 
 class WindowImplWin32 final : public Window {
 public:
@@ -545,6 +550,22 @@ public:
     std::string tooltipText;
     bool scrollbarVisible = false;
 
+    // Docking support - only used for TOPLEVEL windows
+    bool supportsDocking = false;
+    std::weak_ptr<WindowImplWin32Docked> dockedWindow;
+    int dockedWidth = 420;
+    bool splitterDragging = false;
+    HCURSOR hSplitterCursor = NULL;
+
+    // Get the area for the main content (excluding docked pane)
+    RECT GetMainContentRect();
+    // Get the splitter rect (between main and docked)
+    RECT GetSplitterRect();
+    // Update layout of docked child window
+    void UpdateDockedLayout();
+    // Check if point is over splitter
+    bool IsOverSplitter(int x, int y);
+
     static void RegisterWindowClass() {
         static bool registered;
         if(registered) return;
@@ -564,8 +585,10 @@ public:
         registered = true;
     }
 
-    WindowImplWin32(Window::Kind kind, std::shared_ptr<WindowImplWin32> parentWindow) {
+    WindowImplWin32(Window::Kind kind, std::shared_ptr<WindowImplWin32> parentWindow,
+                    bool enableDocking = false) {
         placement.length = sizeof(placement);
+        supportsDocking = enableDocking;
 
         RegisterWindowClass();
 
@@ -583,6 +606,11 @@ public:
             case Window::Kind::TOOL:
                 style |= WS_POPUPWINDOW|WS_CAPTION;
                 break;
+        }
+
+        // Load splitter cursor for docking support
+        if(supportsDocking) {
+            hSplitterCursor = LoadCursorW(NULL, IDC_SIZEWE);
         }
         sscheck(hWindow = CreateWindowExW(0, L"SolveSpace", L"", style,
                                           CW_USEDEFAULT, CW_USEDEFAULT,
@@ -790,6 +818,7 @@ public:
 
             case WM_SIZE:
                 window->Invalidate();
+                window->UpdateDockedLayout();
                 break;
 
             case WM_SIZING: {
@@ -850,6 +879,20 @@ public:
                 break;
             }
 
+            // Handle splitter cursor and dragging for docked windows
+            case WM_SETCURSOR: {
+                if(window->supportsDocking && !window->dockedWindow.expired()) {
+                    POINT pt;
+                    GetCursorPos(&pt);
+                    ScreenToClient(window->hWindow, &pt);
+                    if(window->IsOverSplitter(pt.x, pt.y)) {
+                        SetCursor(window->hSplitterCursor);
+                        return TRUE;
+                    }
+                }
+                return DefWindowProcW(h, msg, wParam, lParam);
+            }
+
             case WM_LBUTTONDOWN:
             case WM_MBUTTONDOWN:
             case WM_RBUTTONDOWN:
@@ -859,6 +902,23 @@ public:
             case WM_LBUTTONUP:
             case WM_MBUTTONUP:
             case WM_RBUTTONUP:
+                // Handle splitter dragging
+                if(window->supportsDocking && !window->dockedWindow.expired()) {
+                    int x = GET_X_LPARAM(lParam);
+                    int y = GET_Y_LPARAM(lParam);
+
+                    if(msg == WM_LBUTTONDOWN && window->IsOverSplitter(x, y)) {
+                        window->splitterDragging = true;
+                        SetCapture(window->hWindow);
+                        return 0;
+                    }
+                    if(msg == WM_LBUTTONUP && window->splitterDragging) {
+                        window->splitterDragging = false;
+                        ReleaseCapture();
+                        return 0;
+                    }
+                }
+
                 if(GetMilliseconds() - Platform::contextMenuPopTime < 100) {
                     // Ignore the mouse click that dismisses a context menu, to avoid
                     // (e.g.) clearing a selection.
@@ -868,6 +928,23 @@ public:
             case WM_MOUSEMOVE:
             case WM_MOUSEWHEEL:
             case WM_MOUSELEAVE: {
+                // Handle splitter dragging
+                if(window->splitterDragging && msg == WM_MOUSEMOVE) {
+                    RECT rc;
+                    GetClientRect(window->hWindow, &rc);
+                    int x = GET_X_LPARAM(lParam);
+                    // Calculate new docked width (docked is on the right)
+                    int newDockedWidth = rc.right - x - SPLITTER_WIDTH / 2;
+                    // Clamp to reasonable bounds
+                    newDockedWidth = max(150, min(newDockedWidth, rc.right - 200));
+                    if(newDockedWidth != window->dockedWidth) {
+                        window->dockedWidth = newDockedWidth;
+                        window->UpdateDockedLayout();
+                        window->Invalidate();
+                    }
+                    return 0;
+                }
+
                 double pixelRatio = window->GetDevicePixelRatio();
 
                 MouseEvent event = {};
@@ -1427,13 +1504,516 @@ public:
     }
 };
 
+// Helper method implementations for docking
+RECT WindowImplWin32::GetMainContentRect() {
+    RECT rc;
+    GetClientRect(hWindow, &rc);
+    if(supportsDocking && !dockedWindow.expired()) {
+        // Main content is on the left, docked pane on the right
+        rc.right = rc.right - dockedWidth - SPLITTER_WIDTH;
+    }
+    return rc;
+}
+
+RECT WindowImplWin32::GetSplitterRect() {
+    RECT rc;
+    GetClientRect(hWindow, &rc);
+    if(supportsDocking && !dockedWindow.expired()) {
+        rc.left = rc.right - dockedWidth - SPLITTER_WIDTH;
+        rc.right = rc.left + SPLITTER_WIDTH;
+    } else {
+        rc.left = rc.right = 0;
+    }
+    return rc;
+}
+
+bool WindowImplWin32::IsOverSplitter(int x, int y) {
+    RECT sr = GetSplitterRect();
+    return x >= sr.left && x < sr.right && y >= sr.top && y < sr.bottom;
+}
+
+void WindowImplWin32::UpdateDockedLayout() {
+    auto docked = dockedWindow.lock();
+    if(!docked) return;
+
+    RECT rc;
+    GetClientRect(hWindow, &rc);
+
+    // Position the docked child window on the right side
+    int dockedLeft = rc.right - dockedWidth;
+    SetWindowPos(docked->hWindow, NULL, dockedLeft, 0, dockedWidth, rc.bottom,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+
+    // Invalidate the docked window too
+    InvalidateRect(docked->hWindow, NULL, FALSE);
+}
+
+//-----------------------------------------------------------------------------
+// Docked Window Implementation
+//-----------------------------------------------------------------------------
+
+class WindowImplWin32Docked final : public Window {
+public:
+    HWND hWindow = NULL;
+    HWND hEditor = NULL;
+    WNDPROC editorWndProc = NULL;
+
+#if HAVE_OPENGL == 1
+    HGLRC hGlRc = NULL;
+#elif HAVE_OPENGL == 3
+    EGLSurface eglSurface = EGL_NO_SURFACE;
+    EGLContext eglContext = EGL_NO_CONTEXT;
+#endif
+
+    std::shared_ptr<WindowImplWin32> parentWindow;
+    bool scrollbarVisible = false;
+
+    static void RegisterDockedWindowClass() {
+        static bool registered;
+        if(registered) return;
+
+        WNDCLASSEXW wc = {};
+        wc.cbSize        = sizeof(wc);
+        wc.style         = CS_BYTEALIGNCLIENT|CS_BYTEALIGNWINDOW|CS_OWNDC|CS_DBLCLKS;
+        wc.lpfnWndProc   = WndProc;
+        wc.cbWndExtra    = sizeof(WindowImplWin32Docked *);
+        wc.hCursor       = LoadCursorW(NULL, IDC_ARROW);
+        wc.lpszClassName = L"SolveSpaceDocked";
+        sscheck(RegisterClassExW(&wc));
+        registered = true;
+    }
+
+    WindowImplWin32Docked(std::shared_ptr<WindowImplWin32> parent) : parentWindow(parent) {
+        RegisterDockedWindowClass();
+
+        // Create as a child window of the parent
+        DWORD style = WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS;
+        sscheck(hWindow = CreateWindowExW(0, L"SolveSpaceDocked", L"", style,
+                                          0, 0, parent->dockedWidth, 100,
+                                          parent->hWindow, NULL, NULL, NULL));
+        sscheck(SetWindowLongPtr(hWindow, 0, (LONG_PTR)this));
+
+        DWORD editorStyle = WS_CLIPSIBLINGS|WS_CHILD|WS_TABSTOP|ES_AUTOHSCROLL;
+        sscheck(hEditor = CreateWindowExW(WS_EX_CLIENTEDGE, WC_EDIT, L"", editorStyle,
+                                          0, 0, 0, 0, hWindow, NULL, NULL, NULL));
+        sscheck(editorWndProc =
+                (WNDPROC)SetWindowLongPtr(hEditor, GWLP_WNDPROC, (LONG_PTR)EditorWndProc));
+
+        HDC hDc;
+        sscheck(hDc = GetDC(hWindow));
+
+#if HAVE_OPENGL == 1
+        PIXELFORMATDESCRIPTOR pfd = {};
+        pfd.nSize        = sizeof(PIXELFORMATDESCRIPTOR);
+        pfd.nVersion     = 1;
+        pfd.dwFlags      = PFD_DRAW_TO_WINDOW|PFD_SUPPORT_OPENGL|PFD_DOUBLEBUFFER;
+        pfd.dwLayerMask  = PFD_MAIN_PLANE;
+        pfd.iPixelType   = PFD_TYPE_RGBA;
+        pfd.cColorBits   = 32;
+        pfd.cDepthBits   = 24;
+        pfd.cAccumBits   = 0;
+        pfd.cStencilBits = 0;
+        int pixelFormat;
+        sscheck(pixelFormat = ChoosePixelFormat(hDc, &pfd));
+        sscheck(SetPixelFormat(hDc, pixelFormat, &pfd));
+
+        sscheck(hGlRc = wglCreateContext(hDc));
+#elif HAVE_OPENGL == 3
+        EGLint configAttributes[] = {
+            EGL_COLOR_BUFFER_TYPE,  EGL_RGB_BUFFER,
+            EGL_RED_SIZE,           8,
+            EGL_GREEN_SIZE,         8,
+            EGL_BLUE_SIZE,          8,
+            EGL_DEPTH_SIZE,         24,
+            EGL_RENDERABLE_TYPE,    EGL_OPENGL_ES2_BIT,
+            EGL_SURFACE_TYPE,       EGL_WINDOW_BIT,
+            EGL_NONE
+        };
+        EGLint numConfigs;
+        EGLConfig windowConfig;
+        ssassert(eglChooseConfig(WindowImplWin32::eglDisplay, configAttributes,
+                                 &windowConfig, 1, &numConfigs),
+                 "Cannot choose EGL configuration");
+
+        EGLint surfaceAttributes[] = { EGL_NONE };
+        eglSurface = eglCreateWindowSurface(WindowImplWin32::eglDisplay, windowConfig,
+                                            hWindow, surfaceAttributes);
+        ssassert(eglSurface != EGL_NO_SURFACE, "Cannot create EGL window surface");
+
+        EGLint contextAttributes[] = {
+            EGL_CONTEXT_CLIENT_VERSION, 2,
+            EGL_NONE
+        };
+        eglContext = eglCreateContext(WindowImplWin32::eglDisplay, windowConfig,
+                                      NULL, contextAttributes);
+        ssassert(eglContext != EGL_NO_CONTEXT, "Cannot create EGL context");
+#endif
+
+        sscheck(ReleaseDC(hWindow, hDc));
+    }
+
+    ~WindowImplWin32Docked() {
+        sscheck(DestroyWindow(hWindow));
+    }
+
+    static LRESULT CALLBACK EditorWndProc(HWND h, UINT msg, WPARAM wParam, LPARAM lParam) {
+        // Same editor handling as main window
+        if(msg == WM_KEYDOWN && wParam == VK_RETURN) {
+            HWND hParent;
+            sscheck(hParent = GetParent(h));
+            WindowImplWin32Docked *window;
+            sscheck(window = (WindowImplWin32Docked *)GetWindowLongPtr(hParent, 0));
+            if(window->onEditingDone) {
+                int length;
+                sscheck(length = GetWindowTextLength(h));
+                std::wstring textW(length, 0);
+                sscheck(GetWindowTextW(h, &textW[0], length + 1));
+                window->onEditingDone(Narrow(textW));
+            }
+            return 0;
+        }
+        if(msg == WM_KEYDOWN && wParam == VK_ESCAPE) {
+            HWND hParent;
+            sscheck(hParent = GetParent(h));
+            WindowImplWin32Docked *window;
+            sscheck(window = (WindowImplWin32Docked *)GetWindowLongPtr(hParent, 0));
+            window->HideEditor();
+            return 0;
+        }
+
+        HWND hParent;
+        sscheck(hParent = GetParent(h));
+        WindowImplWin32Docked *window;
+        sscheck(window = (WindowImplWin32Docked *)GetWindowLongPtr(hParent, 0));
+        return CallWindowProc(window->editorWndProc, h, msg, wParam, lParam);
+    }
+
+    static LRESULT CALLBACK WndProc(HWND h, UINT msg, WPARAM wParam, LPARAM lParam) {
+        if(handlingFatalError) return TRUE;
+
+        WindowImplWin32Docked *window;
+        sscheck(window = (WindowImplWin32Docked *)GetWindowLongPtr(h, 0));
+
+        if(window == NULL) {
+            return DefWindowProcW(h, msg, wParam, lParam);
+        }
+
+        switch(msg) {
+            case WM_ERASEBKGND:
+                break;
+
+            case WM_PAINT: {
+                PAINTSTRUCT ps;
+                HDC hDc = BeginPaint(window->hWindow, &ps);
+                if(window->onRender) {
+#if HAVE_OPENGL == 1
+                    wglMakeCurrent(hDc, window->hGlRc);
+#elif HAVE_OPENGL == 3
+                    eglMakeCurrent(WindowImplWin32::eglDisplay, window->eglSurface,
+                                   window->eglSurface, window->eglContext);
+#endif
+                    window->onRender();
+#if HAVE_OPENGL == 1
+                    SwapBuffers(hDc);
+#elif HAVE_OPENGL == 3
+                    eglSwapBuffers(WindowImplWin32::eglDisplay, window->eglSurface);
+                    (void)hDc;
+#endif
+                }
+                EndPaint(window->hWindow, &ps);
+                break;
+            }
+
+            case WM_SIZE:
+                window->Invalidate();
+                break;
+
+            case WM_LBUTTONDOWN:
+            case WM_MBUTTONDOWN:
+            case WM_RBUTTONDOWN:
+            case WM_LBUTTONDBLCLK:
+            case WM_MBUTTONDBLCLK:
+            case WM_RBUTTONDBLCLK:
+            case WM_LBUTTONUP:
+            case WM_MBUTTONUP:
+            case WM_RBUTTONUP:
+            case WM_MOUSEMOVE:
+            case WM_MOUSEWHEEL:
+            case WM_MOUSELEAVE: {
+                double pixelRatio = window->GetDevicePixelRatio();
+
+                MouseEvent event = {};
+                event.x = GET_X_LPARAM(lParam) / pixelRatio;
+                event.y = GET_Y_LPARAM(lParam) / pixelRatio;
+                event.button = MouseEvent::Button::NONE;
+
+                event.shiftDown   = (wParam & MK_SHIFT) != 0;
+                event.controlDown = (wParam & MK_CONTROL) != 0;
+
+                switch(msg) {
+                    case WM_LBUTTONDOWN:
+                        event.button = MouseEvent::Button::LEFT;
+                        event.type = MouseEvent::Type::PRESS;
+                        break;
+                    case WM_MBUTTONDOWN:
+                        event.button = MouseEvent::Button::MIDDLE;
+                        event.type = MouseEvent::Type::PRESS;
+                        break;
+                    case WM_RBUTTONDOWN:
+                        event.button = MouseEvent::Button::RIGHT;
+                        event.type = MouseEvent::Type::PRESS;
+                        break;
+                    case WM_LBUTTONDBLCLK:
+                        event.button = MouseEvent::Button::LEFT;
+                        event.type = MouseEvent::Type::DBL_PRESS;
+                        break;
+                    case WM_MBUTTONDBLCLK:
+                        event.button = MouseEvent::Button::MIDDLE;
+                        event.type = MouseEvent::Type::DBL_PRESS;
+                        break;
+                    case WM_RBUTTONDBLCLK:
+                        event.button = MouseEvent::Button::RIGHT;
+                        event.type = MouseEvent::Type::DBL_PRESS;
+                        break;
+                    case WM_LBUTTONUP:
+                        event.button = MouseEvent::Button::LEFT;
+                        event.type = MouseEvent::Type::RELEASE;
+                        break;
+                    case WM_MBUTTONUP:
+                        event.button = MouseEvent::Button::MIDDLE;
+                        event.type = MouseEvent::Type::RELEASE;
+                        break;
+                    case WM_RBUTTONUP:
+                        event.button = MouseEvent::Button::RIGHT;
+                        event.type = MouseEvent::Type::RELEASE;
+                        break;
+                    case WM_MOUSEWHEEL: {
+                        event.type = MouseEvent::Type::SCROLL_VERT;
+                        event.scrollDelta = GET_WHEEL_DELTA_WPARAM(wParam) / (double)WHEEL_DELTA;
+                        break;
+                    }
+                    case WM_MOUSEMOVE:
+                        event.type = MouseEvent::Type::MOTION;
+                        break;
+                    case WM_MOUSELEAVE:
+                        event.type = MouseEvent::Type::LEAVE;
+                        break;
+                }
+
+                if(window->onMouseEvent) {
+                    window->onMouseEvent(event);
+                }
+                break;
+            }
+
+            case WM_VSCROLL: {
+                SCROLLINFO si = {};
+                si.cbSize = sizeof(si);
+                si.fMask  = SIF_POS|SIF_TRACKPOS|SIF_RANGE|SIF_PAGE;
+                sscheck(GetScrollInfo(window->hWindow, SB_VERT, &si));
+
+                switch(LOWORD(wParam)) {
+                    case SB_TOP:        si.nPos = si.nMin;     break;
+                    case SB_BOTTOM:     si.nPos = si.nMax;     break;
+                    case SB_LINEUP:     si.nPos -= 1;          break;
+                    case SB_LINEDOWN:   si.nPos += 1;          break;
+                    case SB_PAGEUP:     si.nPos -= si.nPage;   break;
+                    case SB_PAGEDOWN:   si.nPos += si.nPage;   break;
+                    case SB_THUMBTRACK: si.nPos = si.nTrackPos;break;
+                }
+
+                si.fMask = SIF_POS;
+                SetScrollInfo(window->hWindow, SB_VERT, &si, TRUE);
+
+                if(window->onScrollbarAdjusted) {
+                    window->onScrollbarAdjusted((double)si.nPos / SCROLLBAR_UNIT);
+                }
+                break;
+            }
+
+            default:
+                return DefWindowProcW(h, msg, wParam, lParam);
+        }
+
+        return 0;
+    }
+
+    double GetPixelDensity() override {
+        return parentWindow->GetPixelDensity();
+    }
+
+    double GetDevicePixelRatio() override {
+        return parentWindow->GetDevicePixelRatio();
+    }
+
+    bool IsVisible() override {
+        return IsWindowVisible(hWindow) == TRUE;
+    }
+
+    void SetVisible(bool visible) override {
+        ShowWindow(hWindow, visible ? SW_SHOW : SW_HIDE);
+    }
+
+    void Focus() override {
+        SetForegroundWindow(hWindow);
+    }
+
+    bool IsFullScreen() override { return false; }
+    void SetFullScreen(bool) override {}
+    void SetTitle(const std::string &) override {}
+    void SetMenuBar(MenuBarRef) override {}
+
+    void GetContentSize(double *width, double *height) override {
+        RECT rc;
+        sscheck(GetClientRect(hWindow, &rc));
+        double pixelRatio = GetDevicePixelRatio();
+        *width  = (rc.right  - rc.left) / pixelRatio;
+        *height = (rc.bottom - rc.top)  / pixelRatio;
+    }
+
+    void SetMinContentSize(double width, double height) override {
+        // Not applicable for docked windows
+    }
+
+    void FreezePosition(SettingsRef settings, const std::string &key) override {
+        settings->FreezeInt(key + "_DockedWidth", parentWindow->dockedWidth);
+    }
+
+    void ThawPosition(SettingsRef settings, const std::string &key) override {
+        parentWindow->dockedWidth = settings->ThawInt(key + "_DockedWidth", 420);
+        parentWindow->UpdateDockedLayout();
+    }
+
+    void SetCursor(Cursor cursor) override {
+        parentWindow->SetCursor(cursor);
+    }
+
+    void SetTooltip(const std::string &, double, double, double, double) override {}
+
+    bool IsEditorVisible() override {
+        return IsWindowVisible(hEditor) == TRUE;
+    }
+
+    void ShowEditor(double x, double y, double fontHeight, double minWidth,
+                    bool isMonospace, const std::string &text) override {
+        if(IsEditorVisible()) return;
+
+        double pixelRatio = GetDevicePixelRatio();
+
+        HFONT hFont = CreateFontW(-(int)(fontHeight * pixelRatio), 0, 0, 0,
+            FW_REGULAR, FALSE, FALSE, FALSE, ANSI_CHARSET, OUT_DEFAULT_PRECIS,
+            CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, FF_DONTCARE,
+            isMonospace ? L"Lucida Console" : L"Arial");
+        if(hFont == NULL) {
+            sscheck(hFont = (HFONT)GetStockObject(SYSTEM_FONT));
+        }
+        sscheck(SendMessageW(hEditor, WM_SETFONT, (WPARAM)hFont, FALSE));
+        sscheck(SendMessageW(hEditor, EM_SETMARGINS, EC_LEFTMARGIN|EC_RIGHTMARGIN, 0));
+
+        std::wstring textW = Widen(text);
+
+        HDC hDc;
+        TEXTMETRICW tm;
+        SIZE ts;
+        sscheck(hDc = GetDC(hEditor));
+        sscheck(SelectObject(hDc, hFont));
+        sscheck(GetTextMetricsW(hDc, &tm));
+        sscheck(GetTextExtentPoint32W(hDc, textW.c_str(), (int)textW.length(), &ts));
+        sscheck(ReleaseDC(hEditor, hDc));
+
+        RECT rc;
+        rc.left   = (LONG)(x * pixelRatio);
+        rc.top    = (LONG)(y * pixelRatio) - tm.tmAscent;
+        rc.right  = (LONG)(x * pixelRatio) +
+                    std::max((LONG)(minWidth * pixelRatio), ts.cx + tm.tmAveCharWidth);
+        rc.bottom = (LONG)(y * pixelRatio) + tm.tmDescent;
+        sscheck(ssAdjustWindowRectExForDpi(&rc, 0, FALSE, WS_EX_CLIENTEDGE,
+                                           ssGetDpiForWindow(hWindow)));
+
+        sscheck(MoveWindow(hEditor, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top, TRUE));
+        ShowWindow(hEditor, SW_SHOW);
+        if(!textW.empty()) {
+            sscheck(SendMessageW(hEditor, WM_SETTEXT, 0, (LPARAM)textW.c_str()));
+            sscheck(SendMessageW(hEditor, EM_SETSEL, 0, textW.length()));
+            sscheck(SetFocus(hEditor));
+        }
+    }
+
+    void HideEditor() override {
+        if(!IsEditorVisible()) return;
+        ShowWindow(hEditor, SW_HIDE);
+    }
+
+    void SetScrollbarVisible(bool visible) override {
+        if(scrollbarVisible != visible) {
+            scrollbarVisible = visible;
+            sscheck(ShowScrollBar(hWindow, SB_VERT, visible));
+        }
+    }
+
+    void ConfigureScrollbar(double min, double max, double pageSize) override {
+        SCROLLINFO si = {};
+        si.cbSize = sizeof(si);
+        si.fMask  = SIF_RANGE|SIF_PAGE;
+        si.nMin   = (UINT)(min * SCROLLBAR_UNIT);
+        si.nMax   = (UINT)(max * SCROLLBAR_UNIT);
+        si.nPage  = (UINT)(pageSize * SCROLLBAR_UNIT);
+        SetScrollInfo(hWindow, SB_VERT, &si, TRUE);
+    }
+
+    double GetScrollbarPosition() override {
+        if(!scrollbarVisible) return 0.0;
+
+        SCROLLINFO si = {};
+        si.cbSize = sizeof(si);
+        si.fMask  = SIF_POS;
+        sscheck(GetScrollInfo(hWindow, SB_VERT, &si));
+        return (double)si.nPos / SCROLLBAR_UNIT;
+    }
+
+    void SetScrollbarPosition(double pos) override {
+        if(!scrollbarVisible) return;
+
+        SCROLLINFO si = {};
+        si.cbSize = sizeof(si);
+        si.fMask  = SIF_POS;
+        sscheck(GetScrollInfo(hWindow, SB_VERT, &si));
+        if(si.nPos == (int)(pos * SCROLLBAR_UNIT))
+            return;
+
+        si.nPos = (int)(pos * SCROLLBAR_UNIT);
+        SetScrollInfo(hWindow, SB_VERT, &si, TRUE);
+
+        if(onScrollbarAdjusted) {
+            onScrollbarAdjusted((double)si.nPos / SCROLLBAR_UNIT);
+        }
+    }
+
+    void Invalidate() override {
+        sscheck(InvalidateRect(hWindow, NULL, FALSE));
+    }
+};
+
 #if HAVE_OPENGL == 3
 EGLDisplay WindowImplWin32::eglDisplay = EGL_NO_DISPLAY;
 #endif
 
 WindowRef CreateWindow(Window::Kind kind, WindowRef parentWindow) {
-    return std::make_shared<WindowImplWin32>(kind,
-                std::static_pointer_cast<WindowImplWin32>(parentWindow));
+    auto parent = std::static_pointer_cast<WindowImplWin32>(parentWindow);
+
+    if(kind == Window::Kind::TOPLEVEL) {
+        return std::make_shared<WindowImplWin32>(kind, parent, /*enableDocking=*/true);
+    }
+
+    // For TOOL windows, check if we should dock
+    if(kind == Window::Kind::TOOL && parent && parent->supportsDocking && SS.textWindowDocked) {
+        auto docked = std::make_shared<WindowImplWin32Docked>(parent);
+        parent->dockedWindow = docked;
+        parent->UpdateDockedLayout();
+        return docked;
+    }
+
+    return std::make_shared<WindowImplWin32>(kind, parent);
 }
 
 //-----------------------------------------------------------------------------
