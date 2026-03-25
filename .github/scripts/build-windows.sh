@@ -4,7 +4,9 @@ mkdir build
 cd build
 
 # Use official pre-built OpenCASCADE (x64 only)
-OCC_DIR="${OpenCASCADE_DIR:-/c/occ/opencascade-7.9.3}"
+# OpenCASCADE_DIR is set by install-windows.sh via GITHUB_ENV
+OCC_DIR="${OpenCASCADE_DIR:-C:/occ/opencascade-7.9.3/cmake}"
+echo "Using OpenCASCADE from: $OCC_DIR"
 
 if [ "$1" = "release" ]; then
     if [ "$2" = "openmp" ]; then
