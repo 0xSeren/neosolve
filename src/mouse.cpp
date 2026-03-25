@@ -17,6 +17,38 @@ void GraphicsWindow::UpdateDraggedPoint(hEntity hp, double mx, double my) {
 }
 
 void GraphicsWindow::UpdateDraggedNum(Vector *pos, double mx, double my) {
+    if(LockedInWorkplane()) {
+        // When locked in a workplane, project the mouse position onto the workplane
+        // to avoid drifting off-plane when viewing at an angle
+        EntityBase *wrkpl = SK.GetEntity(ActiveWorkplane());
+        EntityBase *norm = wrkpl->Normal();
+        Vector wn = norm->NormalN();
+        Vector wo = SK.GetEntity(wrkpl->point[0])->PointGetNum();
+        double d = wo.Dot(wn);
+
+        // Cast ray through current mouse position
+        Vector p0 = UnProjectPoint3(Vector::From(mx, my, 0.0));
+        Vector p1 = UnProjectPoint3(Vector::From(mx, my, 1.0));
+
+        bool parallel;
+        Vector newPos = Vector::AtIntersectionOfPlaneAndLine(wn, d, p0, p1, &parallel);
+
+        if(!parallel) {
+            // Cast ray through previous mouse position
+            Vector q0 = UnProjectPoint3(Vector::From(orig.mouse.x, orig.mouse.y, 0.0));
+            Vector q1 = UnProjectPoint3(Vector::From(orig.mouse.x, orig.mouse.y, 1.0));
+            Vector oldPos = Vector::AtIntersectionOfPlaneAndLine(wn, d, q0, q1, &parallel);
+
+            if(!parallel) {
+                // Apply the delta in workplane coordinates
+                Vector delta = newPos.Minus(oldPos);
+                *pos = pos->Plus(delta);
+                return;
+            }
+        }
+    }
+
+    // Fall back to screen-space delta (free 3D or parallel view)
     *pos = pos->Plus(projRight.ScaledBy((mx - orig.mouse.x)/scale));
     *pos = pos->Plus(projUp.ScaledBy((my - orig.mouse.y)/scale));
 }
@@ -1140,10 +1172,36 @@ void GraphicsWindow::MouseLeftDown(double mx, double my, bool shiftDown, bool ct
     orig.mouseOnButtonDown = orig.mouse;
     Point2d mouse = Point2d::From(mx, my);
 
-    // The current mouse location
-    Vector v = offset.ScaledBy(-1);
-    v = v.Plus(projRight.ScaledBy(mx/scale));
-    v = v.Plus(projUp.ScaledBy(my/scale));
+    // The current mouse location - must be projected onto workplane if locked
+    Vector v;
+    if(LockedInWorkplane()) {
+        // Cast a ray from the camera through the mouse position and intersect
+        // with the workplane to get the correct 3D point
+        EntityBase *wrkpl = SK.GetEntity(ActiveWorkplane());
+        EntityBase *norm = wrkpl->Normal();
+        Vector wn = norm->NormalN();  // Workplane normal
+        Vector wo = SK.GetEntity(wrkpl->point[0])->PointGetNum();  // Workplane origin
+        double d = wo.Dot(wn);  // Plane equation: n.p = d
+
+        // Create two points on the ray through the mouse position
+        // p0 is on the near plane, p1 is further along the ray
+        Vector p0 = UnProjectPoint3(Vector::From(mx, my, 0.0));
+        Vector p1 = UnProjectPoint3(Vector::From(mx, my, 1.0));
+
+        bool parallel;
+        v = Vector::AtIntersectionOfPlaneAndLine(wn, d, p0, p1, &parallel);
+        if(parallel) {
+            // Viewing parallel to workplane - fall back to screen projection
+            v = offset.ScaledBy(-1);
+            v = v.Plus(projRight.ScaledBy(mx/scale));
+            v = v.Plus(projUp.ScaledBy(my/scale));
+        }
+    } else {
+        // Free in 3D - use point in plane parallel to screen
+        v = offset.ScaledBy(-1);
+        v = v.Plus(projRight.ScaledBy(mx/scale));
+        v = v.Plus(projUp.ScaledBy(my/scale));
+    }
 
     hRequest hr = {};
     hConstraint hc = {};
