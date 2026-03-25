@@ -68,7 +68,7 @@ set(ENABLE_COVERAGE   OFF CACHE BOOL
     "Whether code coverage information will be collected")
 set(ENABLE_SANITIZERS OFF CACHE BOOL
     "Whether to enable Clang's AddressSanitizer and UndefinedBehaviorSanitizer")
-set(ENABLE_OPENMP     OFF CACHE BOOL
+set(ENABLE_OPENMP     ON CACHE BOOL
     "Whether geometric operations will be parallelized using OpenMP")
 set(ENABLE_LTO        OFF CACHE BOOL
     "Whether interprocedural (global) optimizations are enabled")

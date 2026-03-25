@@ -1,356 +1,186 @@
-# SolveSpace
+# neosolve
 
-<img src="res/freedesktop/solvespace-scalable.svg" width="70" height="70" alt="SolveSpace Logo" align="left">
+<img src="res/freedesktop/solvespace-scalable.svg" width="70" height="70" alt="neosolve Logo" align="left">
 
-[![Build Status](https://github.com/solvespace/solvespace/workflows/CD/badge.svg)](https://github.com/solvespace/solvespace/actions)
-[![solvespace](https://snapcraft.io/solvespace/badge.svg)](https://snapcraft.io/solvespace)
-[![solvespace](https://snapcraft.io/solvespace/trending.svg?name=0)](https://snapcraft.io/solvespace)
+[![Build Status](https://github.com/0xSeren/neosolve/workflows/CD/badge.svg)](https://github.com/0xSeren/neosolve/actions)
 
-This repository contains the source code of [SolveSpace][], a parametric
-2d/3d CAD tool.
+**neosolve** is an enhanced fork of [SolveSpace](https://solvespace.com), the parametric 2D/3D CAD tool. It integrates OpenCASCADE for modern solid modeling operations while preserving SolveSpace's lightweight, constraint-based workflow.
 
-[solvespace]: https://solvespace.com
+## Why neosolve?
 
-## Community
+SolveSpace's native geometric kernel is a remarkable piece of engineering—lean, educational, and fully self-contained. It demonstrates that you don't need a massive dependency to do real CAD work. We believe this kernel has a good reason to exist and deserves continued development.
 
-The official SolveSpace [website][sswebsite] has [tutorials][sstutorial],
-[reference manual][ssref] and a [forum][ssforum]; there is also an official
-IRC channel [#solvespace at web.libera.chat][ssirc].
+However, for day-to-day CAD work, certain operations remain difficult or impossible with the native kernel: robust fillets, chamfers, shells, lofts, sweeps, and reliable STEP import/export. OpenCASCADE provides these capabilities today.
 
-[sswebsite]: http://solvespace.com/
-[ssref]: http://solvespace.com/ref.pl
-[sstutorial]: http://solvespace.com/tutorial.pl
-[ssforum]: http://solvespace.com/forum.pl
-[ssirc]: https://web.libera.chat/#solvespace
+neosolve treats OpenCASCADE as a necessary bridge—enabling productive work now while the native kernel matures. Both kernels run side-by-side, with the OCC kernel handling operations that would otherwise be unavailable.
 
-# Installation
+### Why not just contribute to SolveSpace?
 
-### Via Official Packages
+Some changes are appropriate for upstream contribution, and we do contribute fixes back where possible. However:
 
-_Official_ release packages for macOS (>=10.6 64-bit) and Windows
-(>=Vista 32-bit) are available via [GitHub releases][rel]. These packages are
-automatically built by the SolveSpace maintainers for each stable release.
+- **Philosophical difference**: SolveSpace values being self-contained with minimal dependencies. Adding OpenCASCADE as a core dependency is a significant departure from this philosophy.
+- **Scope of changes**: Many features (dockable panels, new constraint types, UI overhauls) involve invasive changes that may not align with upstream priorities.
+- **Experimentation**: neosolve serves as a testing ground for ideas that may eventually inform upstream development.
 
-[rel]: https://github.com/solvespace/solvespace/releases
+We encourage users who prefer a dependency-free experience to use upstream SolveSpace.
 
-### Via Flathub
+## Features
 
-Official releases can be installed as a Flatpak from Flathub.
+### OpenCASCADE Integration
 
-[Get SolveSpace from Flathub](https://flathub.org/apps/details/com.solvespace.SolveSpace)
+- **Solid Operations**: Extrusion, lathe, revolve, fillet, chamfer, shell, loft, sweep, mirror
+- **STEP/BREP/IGES Import**: Import solid geometry as manipulable groups with cached meshes
+- **STEP/BREP Export**: Export models using OCC's robust writers
+- **Dual Kernel**: OCC runs alongside the native NURBS kernel with automatic fallback
 
-These should work on any Linux distribution that supports Flatpak.
+### New Constraints
 
-### Via Snap Store
+- **Circle-Line Tangent**: Constrain circles tangent to lines
+- **Concentric**: Select multiple circles/arcs to make centers coincident
+- **Point-on-Cubic**: Constrain points to lie on Bezier curves
+- **Point-on-Segment**: Bound points to finite line segments (not infinite lines)
+- **Inequality Constraints**: Minimum/maximum distance constraints (≥ and ≤)
 
-Official releases can be installed from the `stable` channel.
+### UI Improvements
 
-Builds from master are automatically released to the `edge` channel in the Snap
-Store. Those packages contain the latest improvements, but receive less testing
-than release builds.
+- **Dockable Property Browser**: Detachable panel for the property browser (GTK)
+- **Directional Marquee Selection**: Left-to-right for window selection, right-to-left for crossing selection
+- **Arrow Key Nudging**: Move selected entities with arrow keys
+- **Improved Themes**: Gruvbox-inspired color palette, Qt dark theme support
+- **Double-Click Text Editing**: Edit TTF text inline by double-clicking
+- **Independent Visibility Toggles**: Separate controls for REF constraints and comments
 
-[![Get it from the Snap Store](https://snapcraft.io/static/images/badges/en/snap-store-black.svg)](https://snapcraft.io/solvespace)
+### Performance
 
-Or install from a terminal:
+- **O(n log n) Triangulation**: Monotone polygon triangulation for large polygons
+- **Mesh Caching**: Cached OCC mesh generation for fast interactive updates
+- **Spatial Hashing**: O(1) vertex deduplication for STL import
+- **Built-in Profiler**: Profile command in CLI with JSON export
 
-```sh
-# for the latest stable release:
-snap install solvespace
+### Export Enhancements
 
-# for the bleeding edge builds from master:
-snap install solvespace --edge
-```
+- **G-Code Arcs**: Export arcs as G02/G03 commands instead of line segments
+- **SVG Improvements**: Closed paths include Z command
+- **CLI Group Export**: `--group` option for targeted export
 
-### Via automated edge builds
+## Installation
 
-> :warning: **Edge builds might be unstable or contain severe bugs!**
-> They are intended for experienced users to test new features or verify bugfixes.
+### Pre-built Packages
 
-Cutting edge builds from the latest master commit are available as zip archives
-from the following links:
+Pre-built packages for **Windows**, **Linux**, and **macOS** are available from [GitHub Releases](https://github.com/0xSeren/neosolve/releases).
 
-- [macOS](https://nightly.link/solvespace/solvespace/workflows/cd/master/macos.zip)
-- [Windows with OpenMP enabled 32bit](https://nightly.link/solvespace/solvespace/workflows/cd/master/windows.zip)
-- [Windows 32bit](https://nightly.link/solvespace/solvespace/workflows/cd/master/windows_single_core.zip)
-- [Windows with OpenMP enabled 64bit](https://nightly.link/solvespace/solvespace/workflows/cd/master/windows_x64.zip)
-- [Windows 64bit](https://nightly.link/solvespace/solvespace/workflows/cd/master/windows_single_core_x64.zip)
+Download the appropriate package for your platform and run the installer or extract the archive.
 
-**Please note that the 64bit Windows versions do *not* support 6DOF (SpeceMouse, SpaceNavigator) controllers.**
+### Building from Source
 
-Extract the downloaded archive and install or execute the contained file as is
-appropriate for your platform.
-
-### Via source code
-
-Irrespective of the OS used, before building, check out the project and the
-necessary submodules:
+Clone the repository with submodules:
 
 ```sh
-git clone https://github.com/solvespace/solvespace
-cd solvespace
+git clone https://github.com/0xSeren/neosolve
+cd neosolve
 git submodule update --init
 ```
 
-You will need `git`. See the platform specific instructions below to install it.
-
 ## Building on Linux
 
-### Building for Linux
+### Dependencies
 
-You will need the usual build tools, CMake, zlib, libpng, cairo, freetype. To
-build the GUI, you will need fontconfig, gtkmm 3.0 (version 3.16 or later) for
-GTK, or QT6 for the newer QT interface, pangomm 1.4, OpenGL and OpenGL GLU, 
-and optionally, the Space Navigator client library. 
-
-On a Debian derivative (e.g. Ubuntu) these can be installed with:
+On Debian/Ubuntu:
 
 ```sh
 sudo apt install git build-essential cmake zlib1g-dev libpng-dev \
-            libcairo2-dev libfreetype6-dev libjson-c-dev \
-            libfontconfig1-dev libpangomm-1.4-dev libgl-dev \
-            libglu-dev libspnav-dev libgtkmm-3.0-dev qt6-base-dev
+    libcairo2-dev libfreetype6-dev libjson-c-dev \
+    libfontconfig1-dev libpangomm-1.4-dev libgl-dev \
+    libglu-dev libspnav-dev libgtkmm-3.0-dev qt6-base-dev \
+    libocct-modeling-algorithms-dev libocct-data-exchange-dev
 ```
 
-On a RedHat derivative (e.g. Fedora) the dependencies can be installed with:
+On Fedora:
 
 ```sh
 sudo dnf install git gcc-c++ cmake zlib-devel libpng-devel \
-            cairo-devel freetype-devel json-c-devel \
-            fontconfig-devel pangomm-devel mesa-libGL-devel \
-            mesa-libGLU-devel libspnav-devel gtkmm30-devel \
-            qt6-qtbase-devel
-```
-`gtkmm30-devel` is required to build the GTK version and `qt6-qtbase-devel` is required to build the QT version. One or
-the other may be omitted if both versions are not needed. Likewise with `libgtkmm-3.0-dev` and `qt6-base-dev` for Debuntu
-respectively.
-
-Before building, [check out the project and the necessary submodules](#via-source-code).
-
-After that, build SolveSpace as following:
-
-```sh
-mkdir build
-cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_OPENMP=ON [-DENABLE_LTO=ON] [-DUSE_QT_GUI=ON] [-DENABLE_GUI=OFF]
-make
-
-# Optionally
-sudo make install
-```
-Optional:
- - -DENABLE_LTO=ON: Enable Link Time Optimization at the expense of longer build time.
- - -DUSE_QT_GUI=ON: Build the newer QT GUI interface.
- - -DENABLE_GUI=OFF: Build only the command-line interface
-
-The GTK graphical interface is built as `build/bin/solvespace`, and the command-line
-interface is built as `build/bin/solvespace-cli`. The QT graphical interface is built
-as `build/bin/solvespace-qt`.
-
-### Building for Windows
-
-Ubuntu will require 20.04 or above. Cross-compiling with WSL is also confirmed
-to work.
-
-You will need the usual build tools, CMake, and a Windows cross-compiler. On a
-Debian derivative (e.g. Ubuntu) these can be installed with:
-
-```sh
-apt-get install git build-essential cmake mingw-w64
+    cairo-devel freetype-devel json-c-devel \
+    fontconfig-devel pangomm-devel mesa-libGL-devel \
+    mesa-libGLU-devel libspnav-devel gtkmm30-devel \
+    qt6-qtbase-devel opencascade-devel
 ```
 
-Before building, [check out the project and the necessary submodules](#via-source-code).
+GTK and Qt dependencies can be omitted if only one GUI is needed.
 
-Build 64-bit SolveSpace with the following:
-
-```sh
-mkdir build
-cd build
-cmake .. -DCMAKE_TOOLCHAIN_FILE=../cmake/Toolchain-mingw64.cmake \
-            -DCMAKE_BUILD_TYPE=Release
-make
-```
-
-The graphical interface is built as `build/bin/solvespace.exe`, and the
-command-line interface is built as `build/bin/solvespace-cli.exe`.
-
-Space Navigator support will not be available.
-
-### Building for web (very experimental)
-
-**Please note that this port contains many critical bugs and unimplemented core functions.**
-
-You will need the usual build tools, cmake and [Emscripten][]. On a Debian derivative (e.g. Ubuntu) dependencies other than Emscripten can be installed with:
-
-```sh
-apt-get install git build-essential cmake
-```
-
-First, install and prepare `emsdk`:
-
-```sh
-git clone https://github.com/emscripten-core/emsdk
-cd emsdk
-./emsdk install latest
-./emsdk activate latest
-source ./emsdk_env.sh
-cd ..
-```
-
-Before building, [check out the project and the necessary submodules](#via-source-code).
-
-After that, build SolveSpace as following:
-
-```sh
-mkdir build
-cd build
-emcmake cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_LTO="ON" -DENABLE_TESTS="OFF" -DENABLE_CLI="OFF" -DENABLE_COVERAGE="OFF"
-make
-```
-
-The graphical interface is built as multiple files in the `build/bin` directory with names
-starting with `solvespace`. It can be run locally with `emrun build/bin/solvespace.html`.
-
-The command-line interface is not available.
-
-[emscripten]: https://emscripten.org/
-
-## Building on macOS
-
-You will need git, XCode tools, CMake and libomp. Git, CMake and libomp can be installed
-via [Homebrew][]:
-
-```sh
-brew install git cmake libomp
-```
-
-XCode has to be installed via AppStore or [the Apple website][appledeveloper];
-it requires a free Apple ID.
-
-Before building, [check out the project and the necessary submodules](#via-source-code).
-
-After that, build SolveSpace as following:
+### Build
 
 ```sh
 mkdir build
 cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_OPENMP=ON
-make
-```
+make -j$(nproc)
 
-Link Time Optimization is supported by adding `-DENABLE_LTO=ON` to cmake at the
-expense of longer build time.
-
-Alternatively, generate an XCode project, open it, and build the "Release" scheme:
-
-```sh
-mkdir build
-cd build
-cmake .. -G Xcode
-```
-
-The application is built in `build/bin/SolveSpace.app`, the graphical interface executable
-is `build/bin/SolveSpace.app/Contents/MacOS/SolveSpace`, and the command-line interface executable
-is `build/bin/SolveSpace.app/Contents/MacOS/solvespace-cli`.
-
-[homebrew]: https://brew.sh/
-[appledeveloper]: https://developer.apple.com/download/
-
-## Building on OpenBSD
-
-You will need git, cmake, libexecinfo, libpng, gtk3mm and pangomm.
-These can be installed from the ports tree:
-
-```sh
-pkg_add -U git cmake libexecinfo png json-c gtk3mm pangomm
-```
-
-Before building, [check out the project and the necessary submodules](#via-source-code).
-
-After that, build SolveSpace as following:
-
-```sh
-mkdir build
-cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make
+# Optional: install system-wide
 sudo make install
 ```
 
-Unfortunately, on OpenBSD, the produced executables are not filesystem location independent
-and must be installed before use. By default, the graphical interface is installed to
-`/usr/local/bin/solvespace`, and the command-line interface is built as
-`/usr/local/bin/solvespace-cli`. It is possible to build only the command-line interface
-by passing the `-DENABLE_GUI=OFF` flag to the cmake invocation.
+## Building on macOS
+
+Install dependencies via Homebrew:
+
+```sh
+brew install git cmake libomp opencascade
+```
+
+Build:
+
+```sh
+mkdir build
+cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release -DENABLE_OPENMP=ON
+make -j$(sysctl -n hw.ncpu)
+```
+
+The application is built as `build/bin/SolveSpace.app`.
 
 ## Building on Windows
 
-You will need [git][gitwin], [cmake][cmakewin] and a C++ compiler
-(either Visual C++ or MinGW). If using Visual C++, Visual Studio 2015
-or later is required.
-If gawk is in your path be sure it is a proper Windows port that can handle CL LF line endings.
-If not CMake may fail in libpng due to some awk scripts - issue #1228.
+### Visual Studio
 
-Before building, [check out the project and the necessary submodules](#via-source-code).
-
-### Building with Visual Studio IDE
-
-Create a directory `build` in
-the source tree and point cmake-gui to the source tree and that directory.
-Press "Configure" and "Generate", then open `build\solvespace.sln` with
-Visual C++ and build it.
-
-### Building with Visual Studio in a command prompt
-
-First, ensure that `git` and `cl` (the Visual C++ compiler driver) are in your
-`%PATH%`; the latter is usually done by invoking `vcvarsall.bat` from your
-Visual Studio install. Then, run the following in cmd or PowerShell:
+1. Install [git](https://git-scm.com/download/win), [CMake](https://cmake.org/download/), and Visual Studio 2019 or later
+2. Install OpenCASCADE via vcpkg: `vcpkg install opencascade:x64-windows`
+3. Clone and build:
 
 ```bat
+git clone https://github.com/0xSeren/neosolve
+cd neosolve
+git submodule update --init
 mkdir build
 cd build
-cmake .. -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release
-nmake
+cmake .. -DCMAKE_TOOLCHAIN_FILE=[vcpkg root]/scripts/buildsystems/vcpkg.cmake
+cmake --build . --config Release
 ```
 
-### Building with MinGW
-
-It is also possible to build SolveSpace using [MinGW][mingw], though
-Space Navigator support will be disabled.
-
-The easiest way to build using MinGW is with [MSYS2][msys2]. If you're not using MSYS2, skip
-the installation instructions and ensure that git, cmake, ninja, and gcc are in your `$PATH`.
-
-With MSYS2, you can build either a 32-bit binary or a 64-bit one, depending on the compiler
-used. The following instructions assume you're running the commands inside an `MSYS2 MINGW64`
-terminal window and building a 64-bit version. If you want to build a 32-bit version, you'll
-need to run the commands in an `MSYS2 MINGW32` terminal window and replace `x86_64`
-with `i686` in the installation commands.
-
-First, install Git, GCC, CMake, and Ninja:
+### MSYS2/MinGW
 
 ```sh
-pacman -Sy mingw-w64-x86_64-git mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja
-```
-
-Then, run the following in bash:
-
-```sh
-mkdir build
-cd build
+pacman -S mingw-w64-x86_64-{git,gcc,cmake,ninja,opencascade}
+mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release -GNinja
 ninja
 ```
 
-[gitwin]: https://git-scm.com/download/win
-[cmakewin]: https://www.cmake.org/download/#latest
-[mingw]: http://www.mingw.org/
-[msys2]: https://www.msys2.org/
+## Usage
+
+neosolve is fully compatible with SolveSpace `.slvs` files. The OpenCASCADE operations are available through the standard group menu when OCC support is enabled.
+
+For documentation on SolveSpace's core features, see the [SolveSpace reference manual](http://solvespace.com/ref.pl) and [tutorials](http://solvespace.com/tutorial.pl).
 
 ## Contributing
 
-See the [guide for contributors](CONTRIBUTING.md) for the best way to file issues, contribute code,
-and debug SolveSpace.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for code style and contribution guidelines.
+
+Bug reports and feature requests are welcome on the [GitHub issue tracker](https://github.com/0xSeren/neosolve/issues).
 
 ## License
 
-SolveSpace is distributed under the terms of the [GPL v3](COPYING.txt) or later.
+neosolve is distributed under the terms of the [GPL v3](COPYING.txt) or later, the same license as SolveSpace.
+
+## Acknowledgments
+
+neosolve builds on the excellent work of the [SolveSpace](https://solvespace.com) project and its contributors. We are grateful for their continued development of the core parametric CAD system.
