@@ -16,7 +16,13 @@ TEST_CASE(normal_migrate_from_v22) {
 TEST_CASE(normal_inters) {
     CHECK_LOAD("normal.slvs");
 
-    Group *g = SK.GetGroup(SS.GW.activeGroup);
+    // Get the last group safely
+    Group *g = nullptr;
+    for(int i = SK.groupOrder.n - 1; i >= 0; i--) {
+        g = SK.group.FindByIdNoOops(SK.groupOrder[i]);
+        if(g) break;
+    }
+    CHECK_TRUE(g != nullptr);
     g->GenerateDisplayItems();
     SMesh *m = &g->displayMesh;
 
