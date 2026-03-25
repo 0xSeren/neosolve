@@ -8,6 +8,13 @@
 
 #ifdef HAVE_OPENCASCADE
 
+// On Windows, include windows.h before OCC headers to avoid conflicts
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 #include <Standard_Version.hxx>
 #include <TopoDS_Shape.hxx>
 #include <TopoDS_Compound.hxx>
