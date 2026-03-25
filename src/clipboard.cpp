@@ -5,12 +5,14 @@
 // Copyright 2008-2013 Jonathan Westhues.
 //-----------------------------------------------------------------------------
 #include "solvespace.h"
+#include <set>
 
 namespace SolveSpace {
 
 void SolveSpaceUI::Clipboard::Clear() {
     c.Clear();
     r.Clear();
+    g.Clear();
 }
 
 bool SolveSpaceUI::Clipboard::ContainsEntity(hEntity he) {
@@ -81,20 +83,62 @@ void GraphicsWindow::CopySelection() {
            n = wrkpln->NormalN(),
            p = SK.GetEntity(wrkpl->point[0])->PointGetNum();
 
+    // Track which linked groups we've already added to clipboard
+    std::set<uint32_t> copiedLinkedGroups;
+
     List<Selection> *ls = &(selection);
     for(Selection *s = ls->First(); s; s = ls->NextAfter(s)) {
         if(!s->entity.v) continue;
-        // Work only on entities that have requests that will generate them.
         Entity *e = SK.GetEntity(s->entity);
         // Skip OCC faces - they can't be copied
         if(e->type == Entity::Type::FACE_OCC) continue;
+
+        // Check if this entity is from a linked or imported group
+        if(!e->h.isFromRequest()) {
+            hGroup hg = e->group;
+            // Skip entities with invalid group handles (e.g., bounding box entities
+            // which use magic group numbers that don't correspond to actual groups)
+            if(!SS.GroupExists(hg)) continue;
+
+            Group *grp = SK.GetGroup(hg);
+            bool isLinkedOrImport = (grp->type == Group::Type::LINKED)
+#ifdef HAVE_OPENCASCADE
+                                 || (grp->type == Group::Type::IMPORT_SOLID)
+#endif
+                                 ;
+            if(isLinkedOrImport &&
+               copiedLinkedGroups.find(hg.v) == copiedLinkedGroups.end())
+            {
+                // Copy the linked/imported group to clipboard
+                ClipboardLinkedGroup clg = {};
+                clg.type = grp->type;
+                clg.linkFile = grp->linkFile;
+                clg.meshCombine = grp->meshCombine;
+                clg.name = grp->name;
+                clg.oldGroup = hg;
+                // Get current transformation
+                clg.trans = Vector::From(
+                    SK.GetParam(hg.param(0))->val,
+                    SK.GetParam(hg.param(1))->val,
+                    SK.GetParam(hg.param(2))->val);
+                clg.q = Quaternion::From(
+                    SK.GetParam(hg.param(3))->val,
+                    SK.GetParam(hg.param(4))->val,
+                    SK.GetParam(hg.param(5))->val,
+                    SK.GetParam(hg.param(6))->val);
+                SS.clipboard.g.Add(&clg);
+                copiedLinkedGroups.insert(hg.v);
+            }
+            continue;
+        }
+
+        // Work only on entities that have requests that will generate them.
         bool hasDistance;
         Request::Type req;
         int pts;
         if(!EntReqTable::GetEntityInfo(e->type, e->extraPoints,
                 &req, &pts, NULL, &hasDistance))
         {
-            if(!e->h.isFromRequest()) continue;
             Request *r = SK.GetRequest(e->h.request());
             if(r->type != Request::Type::DATUM_POINT) continue;
             ssassert(EntReqTable::GetEntityInfo((Entity::Type)0, e->extraPoints,
@@ -157,6 +201,93 @@ void GraphicsWindow::CopySelection() {
 }
 
 void GraphicsWindow::PasteClipboard(Vector trans, double theta, double scale) {
+    // Track last pasted IMPORT_SOLID group to activate at end
+    hGroup pastedImportSolidGroup = {};
+
+    // First, paste any linked/imported groups
+    ClipboardLinkedGroup *clg;
+    for(clg = SS.clipboard.g.First(); clg; clg = SS.clipboard.g.NextAfter(clg)) {
+        Group g = {};
+        g.type = clg->type;
+        g.meshCombine = clg->meshCombine;
+        g.linkFile = clg->linkFile;
+        g.name = clg->name + " (copy)";
+        g.visible = true;
+        g.color = RgbaColor::FromFloat(0.4f, 0.4f, 0.4f, 1.0f);
+
+        // Find order position after active group
+        bool afterActive = false;
+        for(hGroup hg : SK.groupOrder) {
+            Group *gi = SK.GetGroup(hg);
+            if(afterActive) gi->order += 1;
+            if(gi->h == activeGroup) {
+                g.order = gi->order + 1;
+                afterActive = true;
+            }
+        }
+
+        SK.group.AddAndAssignId(&g);
+        hGroup newGroupH = g.h;
+        Group *gg = SK.GetGroup(newGroupH);
+
+        // For linked .slvs files, reload them
+        if(clg->type == Group::Type::LINKED) {
+            SS.ReloadAllLinked(SS.saveFile);
+        }
+#ifdef HAVE_OPENCASCADE
+        // For IMPORT_SOLID, preload the solid to populate impEntity
+        if(clg->type == Group::Type::IMPORT_SOLID) {
+            SS.PreloadImportedSolids();
+            pastedImportSolidGroup = newGroupH;
+        }
+#endif
+
+        // Regenerate to create the group's params and populate impEntity
+        // Use ALL to ensure the new group (which is after activeGroup) gets processed
+        SS.GenerateAll(SolveSpaceUI::Generate::ALL);
+
+#ifdef HAVE_OPENCASCADE
+        // For IMPORT_SOLID, need a second pass to copy impEntity to SK.entity
+        // Re-get group pointer after GenerateAll as it may have reallocated
+        if(clg->type == Group::Type::IMPORT_SOLID) {
+            Group *gg2 = SK.GetGroup(newGroupH);
+            gg2->clean = false;
+            SS.GenerateAll(SolveSpaceUI::Generate::ALL);
+        }
+#endif
+        // Re-get pointer after potential reallocation
+        gg = SK.GetGroup(newGroupH);
+
+        // Apply the transformation (original + paste offset)
+        // First apply the rotation from theta around the workplane normal
+        Entity *wrkpln = SK.GetEntity(SK.GetEntity(ActiveWorkplane())->normal);
+        Vector wn = wrkpln->NormalN();
+        Quaternion pasteRot = Quaternion::From(wn, theta);
+        Quaternion newQ = pasteRot.Times(clg->q);
+
+        // Apply the translation
+        Vector newTrans = clg->trans.Plus(trans);
+
+        // Set the transformation parameters (now that they exist after GenerateAll)
+        SK.GetParam(newGroupH.param(0))->val = newTrans.x;
+        SK.GetParam(newGroupH.param(1))->val = newTrans.y;
+        SK.GetParam(newGroupH.param(2))->val = newTrans.z;
+        SK.GetParam(newGroupH.param(3))->val = newQ.w;
+        SK.GetParam(newGroupH.param(4))->val = newQ.vx;
+        SK.GetParam(newGroupH.param(5))->val = newQ.vy;
+        SK.GetParam(newGroupH.param(6))->val = newQ.vz;
+
+        gg->clean = false;
+        clg->newGroup = newGroupH;
+    }
+
+    // If we pasted linked/imported groups, regenerate with the new transformation
+    // and update the browser so the user can see the new group
+    if(!SS.clipboard.g.IsEmpty()) {
+        SS.GenerateAll(SolveSpaceUI::Generate::ALL);
+        SS.ScheduleShowTW();  // Show the text window with the new group
+    }
+
     Entity *wrkpl  = SK.GetEntity(ActiveWorkplane());
     Entity *wrkpln = SK.GetEntity(wrkpl->normal);
     Vector u = wrkpln->NormalU(),
@@ -312,6 +443,19 @@ void GraphicsWindow::PasteClipboard(Vector trans, double theta, double scale) {
             }
         }
     }
+
+    // If we pasted an IMPORT_SOLID group, activate it so its bounding box is visible
+    // (must be done at the end, after all workplane-dependent code above)
+    if(pastedImportSolidGroup.v != 0) {
+        activeGroup = pastedImportSolidGroup;
+        SS.GW.EnsureValidActives();
+        SS.MarkGroupDirty(pastedImportSolidGroup);
+        SS.GenerateAll(SolveSpaceUI::Generate::ALL);
+        SS.ScheduleShowTW();
+        // Force full graphics redraw to show the new bounding box entities
+        SS.GW.Invalidate();
+        SS.GW.havePainted = false;  // Force full repaint
+    }
 }
 
 void GraphicsWindow::MenuClipboard(Command id) {
@@ -332,7 +476,7 @@ void GraphicsWindow::MenuClipboard(Command id) {
         }
 
         case Command::PASTE_TRANSFORM: {
-            if(SS.clipboard.r.IsEmpty()) {
+            if(SS.clipboard.r.IsEmpty() && SS.clipboard.g.IsEmpty()) {
                 Error(_("Clipboard is empty; nothing to paste."));
                 break;
             }

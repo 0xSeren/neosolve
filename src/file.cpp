@@ -4,6 +4,9 @@
 // Copyright 2008-2013 Jonathan Westhues.
 //-----------------------------------------------------------------------------
 #include "solvespace.h"
+#ifdef HAVE_OPENCASCADE
+#include "occ/solidmodel.h"
+#endif
 
 namespace SolveSpace {
 
@@ -976,6 +979,25 @@ try_again:
     }
 
     return true;
+}
+
+void SolveSpaceUI::PreloadImportedSolids() {
+#ifdef HAVE_OPENCASCADE
+    for(Group &g : SK.group) {
+        if(g.type != Group::Type::IMPORT_SOLID) continue;
+        if(g.linkFile.IsEmpty()) continue;
+
+        // Cache the solid if not already cached
+        if(!SolidModelOcc::GetCachedMesh(g.linkFile)) {
+            bool success = false;
+            SolidModelOcc::ImportCached(g.linkFile, &success);
+        }
+
+        // Create bounding box entities from cache so they're available
+        // when Generate() runs (which copies them to SK.entity)
+        g.PopulateBoundingBoxEntities();
+    }
+#endif
 }
 
 bool SolveSpaceUI::ReloadLinkedImage(const Platform::Path &saveFile,

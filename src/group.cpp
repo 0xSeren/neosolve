@@ -553,9 +553,27 @@ void Group::MenuGroup(Command id, Platform::Path linkFile) {
     if(gg->type == Type::LINKED) {
         SS.ReloadAllLinked(SS.saveFile);
     }
+#ifdef HAVE_OPENCASCADE
+    if(gg->type == Type::IMPORT_SOLID) {
+        SS.PreloadImportedSolids();
+    }
+#endif
     gg->clean = false;
     SS.GW.activeGroup = gg->h;
-    SS.GenerateAll();
+#ifdef HAVE_OPENCASCADE
+    if(gg->type == Type::IMPORT_SOLID) {
+        // For IMPORT_SOLID, need two passes: first populates impEntity via
+        // GenerateShellAndMesh, second copies them to SK.entity via Generate
+        SS.GenerateAll(SolveSpaceUI::Generate::ALL);
+        gg = SK.GetGroup(g.h);  // Re-get after potential reallocation
+        gg->clean = false;
+        SS.GenerateAll(SolveSpaceUI::Generate::ALL);
+        gg = SK.GetGroup(g.h);  // Re-get again
+    } else
+#endif
+    {
+        SS.GenerateAll();
+    }
     if(gg->type == Type::DRAWING_WORKPLANE) {
         // Can't set the active workplane for this one until after we've
         // regenerated, because the workplane doesn't exist until then.
