@@ -17,8 +17,14 @@ echo "Extracting OpenCASCADE..."
 unzip -q -o opencascade-x64.zip
 unzip -q -o 3rdparty-x64.zip
 
+# Show extracted structure for debugging
+ls -la /c/occ/
+ls -la /c/occ/opencascade-${OCC_VERSION}/ || true
+ls -la /c/occ/opencascade-${OCC_VERSION}/cmake/ || true
+
 # Set up environment for CMake to find OpenCASCADE
-echo "OpenCASCADE_DIR=/c/occ/opencascade-${OCC_VERSION}" >> $GITHUB_ENV
+# The cmake config is in <install>/cmake/
+echo "OpenCASCADE_DIR=C:/occ/opencascade-${OCC_VERSION}/cmake" >> $GITHUB_ENV
 
 cd -
 git submodule update --init
