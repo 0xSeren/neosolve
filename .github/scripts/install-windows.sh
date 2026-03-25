@@ -24,7 +24,7 @@ ls -la /c/occ/opencascade-${OCC_VERSION}/cmake/ || true
 
 # Set up environment for CMake to find OpenCASCADE
 # The cmake config is in <install>/cmake/
-echo "OpenCASCADE_DIR=C:/occ/opencascade-${OCC_VERSION}/cmake" >> $GITHUB_ENV
+echo "OpenCASCADE_DIR=C:/occ/opencascade-${OCC_VERSION}-vc14-64/cmake" >> $GITHUB_ENV
 
 cd -
 git submodule update --init

@@ -5,7 +5,7 @@ cd build
 
 # Use official pre-built OpenCASCADE (x64 only)
 # OpenCASCADE_DIR is set by install-windows.sh via GITHUB_ENV
-OCC_DIR="${OpenCASCADE_DIR:-C:/occ/opencascade-7.9.3/cmake}"
+OCC_DIR="${OpenCASCADE_DIR:-C:/occ/opencascade-7.9.3-vc14-64/cmake}"
 echo "Using OpenCASCADE from: $OCC_DIR"
 
 if [ "$1" = "release" ]; then
