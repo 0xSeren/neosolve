@@ -13,6 +13,10 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+// Undefine Windows macros that conflict with OCC/SolveSpace code
+#undef DIFFERENCE
+#undef ABSOLUTE
+#undef RELATIVE
 #endif
 
 #include <Standard_Version.hxx>
