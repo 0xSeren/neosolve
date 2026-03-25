@@ -8,11 +8,11 @@
 
 ## Why neosolve?
 
-SolveSpace's native geometric kernel is a remarkable piece of engineering—lean, educational, and fully self-contained. It demonstrates that you don't need a massive dependency to do real CAD work. We believe this kernel has a good reason to exist and deserves continued development.
+SolveSpace's native geometric kernel is a remarkable piece of engineering - lean, educational, and fully self-contained. It demonstrates that you don't need a massive dependency to do real CAD work. We believe this kernel has a good reason to exist and deserves continued development.
 
 However, for day-to-day CAD work, certain operations remain difficult or impossible with the native kernel: robust fillets, chamfers, shells, lofts, sweeps, and reliable STEP import/export. OpenCASCADE provides these capabilities today.
 
-neosolve treats OpenCASCADE as a necessary bridge—enabling productive work now while the native kernel matures. Both kernels run side-by-side, with the OCC kernel handling operations that would otherwise be unavailable.
+neosolve treats OpenCASCADE as a necessary bridge - enabling productive work now while the native kernel matures. Both kernels run side-by-side, with the OCC kernel handling operations that would otherwise be unavailable.
 
 ### Why not just contribute to SolveSpace?
 

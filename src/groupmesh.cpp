@@ -63,7 +63,7 @@ static hEntity newBBoxPoint(EntityList *el, int *id, Vector p) {
     en.timesApplied = 0;
     en.group.v = IMPORT_SOLID_POINT_GROUP;
     en.actPoint = p;
-    en.construction = true;
+    en.construction = false;  // Match importmesh.cpp
     en.style.v = Style::DATUM;
     en.actVisible = true;
     en.forceHidden = false;
@@ -81,7 +81,7 @@ static hEntity newBBoxNormal(EntityList *el, int *id, Quaternion normal, hEntity
     en.timesApplied = 0;
     en.group.v = IMPORT_SOLID_NORMAL_GROUP;
     en.actNormal = normal;
-    en.construction = true;
+    en.construction = false;  // Match importmesh.cpp
     en.style.v = Style::NORMALS;
     en.point[0] = p;
     en.actVisible = true;
@@ -101,8 +101,8 @@ static hEntity newBBoxLine(EntityList *el, int *id, hEntity p0, hEntity p1) {
     en.extraPoints = 0;
     en.timesApplied = 0;
     en.group.v = IMPORT_SOLID_LINE_GROUP;
-    en.construction = true;
-    en.style.v = Style::CONSTRUCTION;
+    en.construction = false;  // Not construction so always visible
+    en.style.v = 0;  // Use default style (ACTIVE_GRP when active)
     en.actVisible = true;
     en.forceHidden = false;
 
@@ -155,6 +155,17 @@ static void CreateBoundingBoxEntities(EntityList *el, Vector minPt, Vector maxPt
     newBBoxLine(el, &id, p[1], p[5]);
     newBBoxLine(el, &id, p[2], p[6]);
     newBBoxLine(el, &id, p[3], p[7]);
+}
+
+void Group::PopulateBoundingBoxEntities() {
+    if(type != Type::IMPORT_SOLID) return;
+    if(linkFile.IsEmpty()) return;
+    if(impEntity.n != 0) return;  // Already populated
+
+    Vector minPt = {}, maxPt = {};
+    if(SolidModelOcc::GetCachedBoundingBox(linkFile, &minPt, &maxPt)) {
+        CreateBoundingBoxEntities(&impEntity, minPt, maxPt);
+    }
 }
 #endif
 

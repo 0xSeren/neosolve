@@ -619,6 +619,7 @@ public:
     bool LoadEntitiesFromSlvs(const Platform::Path &filename, EntityList *le,
                               SMesh *m, SShell *sh);
     bool ReloadAllLinked(const Platform::Path &filename, bool canCancel = false);
+    void PreloadImportedSolids();
     // And the various export options
     void ExportAsPngTo(const Platform::Path &filename);
     void ExportMeshTo(const Platform::Path &filename);
@@ -662,8 +663,9 @@ public:
 
     class Clipboard {
     public:
-        List<ClipboardRequest>  r;
-        List<Constraint>        c;
+        List<ClipboardRequest>      r;
+        List<Constraint>            c;
+        List<ClipboardLinkedGroup>  g;
 
         void Clear();
         bool ContainsEntity(hEntity old);

@@ -388,6 +388,7 @@ public:
     void GenerateDisplayItems();
 #ifdef HAVE_OPENCASCADE
     void CreateOccFaceEntities(EntityList *el);
+    void PopulateBoundingBoxEntities();
 #endif
 
     enum class DrawMeshAs { DEFAULT, HOVERED, SELECTED };
@@ -1029,6 +1030,19 @@ inline bool hEquation::isFromConstraint() const
     { if(v & 0xc0000000) return false; else return true; }
 inline hConstraint hEquation::constraint() const
     { hConstraint r; r.v = (v >> 16); return r; }
+
+// The format for linked/imported groups stored on the clipboard.
+class ClipboardLinkedGroup {
+public:
+    Group::Type    type;
+    Platform::Path linkFile;
+    Vector         trans;
+    Quaternion     q;
+    Group::CombineAs meshCombine;
+    std::string    name;
+    hGroup         oldGroup;
+    hGroup         newGroup;
+};
 
 // The format for entities stored on the clipboard.
 class ClipboardRequest {
