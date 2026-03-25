@@ -886,7 +886,7 @@ public:
                     GetCursorPos(&pt);
                     ScreenToClient(window->hWindow, &pt);
                     if(window->IsOverSplitter(pt.x, pt.y)) {
-                        SetCursor(window->hSplitterCursor);
+                        ::SetCursor(window->hSplitterCursor);
                         return TRUE;
                     }
                 }
@@ -934,9 +934,9 @@ public:
                     GetClientRect(window->hWindow, &rc);
                     int x = GET_X_LPARAM(lParam);
                     // Calculate new docked width (docked is on the right)
-                    int newDockedWidth = rc.right - x - SPLITTER_WIDTH / 2;
+                    int newDockedWidth = (int)(rc.right - x - SPLITTER_WIDTH / 2);
                     // Clamp to reasonable bounds
-                    newDockedWidth = max(150, min(newDockedWidth, rc.right - 200));
+                    newDockedWidth = max(150, min(newDockedWidth, (int)(rc.right - 200)));
                     if(newDockedWidth != window->dockedWidth) {
                         window->dockedWidth = newDockedWidth;
                         window->UpdateDockedLayout();
@@ -1532,22 +1532,6 @@ bool WindowImplWin32::IsOverSplitter(int x, int y) {
     return x >= sr.left && x < sr.right && y >= sr.top && y < sr.bottom;
 }
 
-void WindowImplWin32::UpdateDockedLayout() {
-    auto docked = dockedWindow.lock();
-    if(!docked) return;
-
-    RECT rc;
-    GetClientRect(hWindow, &rc);
-
-    // Position the docked child window on the right side
-    int dockedLeft = rc.right - dockedWidth;
-    SetWindowPos(docked->hWindow, NULL, dockedLeft, 0, dockedWidth, rc.bottom,
-                 SWP_NOZORDER | SWP_NOACTIVATE);
-
-    // Invalidate the docked window too
-    InvalidateRect(docked->hWindow, NULL, FALSE);
-}
-
 //-----------------------------------------------------------------------------
 // Docked Window Implementation
 //-----------------------------------------------------------------------------
@@ -1993,6 +1977,22 @@ public:
         sscheck(InvalidateRect(hWindow, NULL, FALSE));
     }
 };
+
+void WindowImplWin32::UpdateDockedLayout() {
+    auto docked = dockedWindow.lock();
+    if(!docked) return;
+
+    RECT rc;
+    GetClientRect(hWindow, &rc);
+
+    // Position the docked child window on the right side
+    int dockedLeft = (int)(rc.right - dockedWidth);
+    SetWindowPos(docked->hWindow, NULL, dockedLeft, 0, dockedWidth, (int)rc.bottom,
+                 SWP_NOZORDER | SWP_NOACTIVATE);
+
+    // Invalidate the docked window too
+    InvalidateRect(docked->hWindow, NULL, FALSE);
+}
 
 #if HAVE_OPENGL == 3
 EGLDisplay WindowImplWin32::eglDisplay = EGL_NO_DISPLAY;
