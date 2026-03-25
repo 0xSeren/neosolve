@@ -57,25 +57,7 @@ jobs:
 
   build_release_windows:
     needs: [test_ubuntu, test_windows, test_macos]
-    name: Build Release Windows (single core)
-    runs-on: windows-2022
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Dependencies
-        run: .github/scripts/install-windows.sh
-        shell: bash
-      - name: Build
-        run: .github/scripts/build-windows.sh release
-        shell: bash
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows_single_core
-          path: build/bin/RelWithDebInfo/solvespace_single_core.exe
-
-  build_release_windows_openmp:
-    needs: [test_ubuntu, test_windows, test_macos]
-    name: Build Release Windows (OpenMP)
+    name: Build Release Windows
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
@@ -85,11 +67,16 @@ jobs:
       - name: Build
         run: .github/scripts/build-windows.sh release openmp
         shell: bash
+      - name: Package
+        shell: bash
+        run: |
+          cd build/bin/RelWithDebInfo
+          7z a -tzip solvespace-windows-x64.zip solvespace.exe *.dll
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: build/bin/RelWithDebInfo/solvespace.exe
+          path: build/bin/RelWithDebInfo/solvespace-windows-x64.zip
 
   build_release_macos:
     needs: [test_ubuntu, test_windows, test_macos]
@@ -136,7 +123,7 @@ jobs:
 
   upload_release_assets:
     name: Upload Release Assets
-    needs: [build_release_windows, build_release_windows_openmp, build_release_macos]
+    needs: [build_release_windows, build_release_macos]
     if: "!cancelled() && github.event_name == 'release'"
     runs-on: ubuntu-latest
     steps:
@@ -159,16 +146,6 @@ jobs:
         upload_url: ${{ steps.get_upload_url.outputs.upload_url }}
         asset_path: windows/solvespace.exe
         asset_name: solvespace.exe
-        asset_content_type: binary/octet-stream
-    - name: Upload solvespace_single_core.exe
-      uses: actions/upload-release-asset@v1
-      continue-on-error: true
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.get_upload_url.outputs.upload_url }}
-        asset_path: windows_single_core/solvespace_single_core.exe
-        asset_name: solvespace_single_core.exe
         asset_content_type: binary/octet-stream
     - name: Upload SolveSpace.dmg
       uses: actions/upload-release-asset@v1
