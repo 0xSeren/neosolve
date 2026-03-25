@@ -99,7 +99,7 @@ public:
             return Path::From("");
         }
         if(!configHome.IsEmpty()) {
-            configHome = configHome.Join("solvespace");
+            configHome = configHome.Join("neospace");
         }
 
         const char *configHomeC = configHome.raw.c_str();
