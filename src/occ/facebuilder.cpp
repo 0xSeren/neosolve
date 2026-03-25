@@ -3,8 +3,10 @@
 //
 //-----------------------------------------------------------------------------
 
-#include "facebuilder.h"
+// Include solvespace.h BEFORE OCC headers to ensure Platform namespace is defined
+// before any Windows headers are included that might interfere
 #include "solvespace.h"
+#include "facebuilder.h"
 
 #ifdef HAVE_OPENCASCADE
 
