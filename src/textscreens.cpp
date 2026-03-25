@@ -492,7 +492,12 @@ void TextWindow::ScreenDeleteGroup(int link, uint32_t v) {
     SS.GW.ClearSuper();
 }
 void TextWindow::ShowGroupInfo() {
-    Group *g = SK.GetGroup(shown.group);
+    Group *g = SK.group.FindByIdNoOops(shown.group);
+    if(!g) {
+        shown.screen = Screen::LIST_OF_GROUPS;
+        Show();
+        return;
+    }
     const char *s = "???";
 
     if(shown.group == Group::HGROUP_REFERENCES) {
