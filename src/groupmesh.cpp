@@ -835,6 +835,7 @@ void Group::GenerateShellAndMesh() {
 
         thisShell.MakeFromTransformationOf(&impShell, offset, q, scale);
         thisShell.RemapFaces(this, 0);
+
     }
 #ifdef HAVE_OPENCASCADE
     else if(type == Type::IMPORT_SOLID) {
@@ -1249,6 +1250,13 @@ void Group::GenerateShellAndMesh() {
 
     Group *prevg = srcg->RunningMeshGroup();
 
+    // For MIRROR, we want to combine with the source group's accumulated geometry,
+    // not the group before the source. The mirrored geometry should be added to
+    // what the source already has.
+    if(type == Type::MIRROR) {
+        prevg = SK.GetGroup(opA);
+    }
+
     if(!IsForcedToMesh()) {
         SShell *prevs = &(prevg->runningShell);
         GenerateForBoolean<SShell>(prevs, &thisShell, &runningShell,
@@ -1457,11 +1465,13 @@ void Group::GenerateDisplayItems() {
         bool hasOwnGeometry = !thisMesh.IsEmpty() || !thisShell.IsEmpty();
 #ifdef HAVE_OPENCASCADE
         // For extrude/lathe/revolve with OCC, we have OCC geometry
+        // But also check mesh/shell as fallback (e.g., MIRROR of LINKED group)
         if(type == Type::EXTRUDE || type == Type::LATHE || type == Type::REVOLVE ||
            type == Type::FILLET || type == Type::CHAMFER || type == Type::SHELL ||
            type == Type::LOFT || type == Type::SWEEP ||
            type == Type::TRANSLATE || type == Type::ROTATE || type == Type::MIRROR) {
-            hasOwnGeometry = (runningSolidModel && !runningSolidModel->IsEmpty());
+            hasOwnGeometry = (runningSolidModel && !runningSolidModel->IsEmpty()) ||
+                             !thisMesh.IsEmpty() || !thisShell.IsEmpty();
         }
         // For IMPORT_SOLID, check cached mesh for ASSEMBLE, otherwise thisSolidModel
         if(type == Type::IMPORT_SOLID) {

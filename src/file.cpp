@@ -355,6 +355,13 @@ bool SolveSpaceUI::SaveToFile(const Platform::Path &filename) {
 
     Group *g = SK.GetGroup(*SK.groupOrder.Last());
     SMesh *m = &g->runningMesh;
+#ifdef HAVE_OPENCASCADE
+    // When OCC is enabled, the mesh may be in runningSolidModel->displayMesh
+    // instead of runningMesh. Use whichever has data.
+    if(m->l.n == 0 && g->runningSolidModel && !g->runningSolidModel->displayMesh.l.IsEmpty()) {
+        m = &g->runningSolidModel->displayMesh;
+    }
+#endif
     for(i = 0; i < m->l.n; i++) {
         STriangle *tr = &(m->l[i]);
         fprintf(fh, "Triangle %08x %08x "
