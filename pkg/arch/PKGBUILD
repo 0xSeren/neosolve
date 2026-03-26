@@ -1,0 +1,57 @@
+# Maintainer: 0xSeren <0xseren@tutamail.com>
+pkgname=neosolve
+pkgver=3.2
+pkgrel=1
+pkgdesc="Parametric 2D/3D CAD with OpenCASCADE STEP/BREP/IGES support"
+arch=('x86_64')
+url="https://github.com/0xSeren/neosolve"
+license=('GPL-3.0-or-later')
+depends=(
+    'cairo'
+    'fontconfig'
+    'freetype2'
+    'glew'
+    'gtkmm3'
+    'json-c'
+    'libpng'
+    'libspnav'
+    'opencascade'
+    'pangomm'
+    'zlib'
+)
+makedepends=(
+    'cmake'
+    'git'
+    'ninja'
+)
+provides=('solvespace')
+conflicts=('solvespace')
+source=("${pkgname}::git+https://github.com/0xSeren/neosolve.git")
+sha256sums=('SKIP')
+
+pkgver() {
+    cd "$srcdir/$pkgname"
+    printf "3.2.r%s.g%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+prepare() {
+    cd "$srcdir/$pkgname"
+    git submodule update --init extlib/libdxfrw extlib/mimalloc extlib/eigen
+}
+
+build() {
+    cd "$srcdir/$pkgname"
+    cmake -B build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr \
+        -DFORCE_VENDORED_Eigen3=ON \
+        -DENABLE_OPENMP=ON \
+        -DENABLE_TESTS=OFF \
+        -DUSE_OPENCASCADE=ON
+    cmake --build build
+}
+
+package() {
+    cd "$srcdir/$pkgname"
+    DESTDIR="$pkgdir" cmake --install build
+}
