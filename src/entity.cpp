@@ -257,6 +257,7 @@ bool EntityBase::IsPoint() const {
         case Type::POINT_N_ROT_TRANS:
         case Type::POINT_N_ROT_AA:
         case Type::POINT_N_ROT_AXIS_TRANS:
+        case Type::POINT_N_MIRROR:
             return true;
 
         default:
