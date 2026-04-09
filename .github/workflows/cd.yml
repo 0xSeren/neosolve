@@ -71,12 +71,12 @@ jobs:
         shell: bash
         run: |
           cd build/bin/RelWithDebInfo
-          7z a -tzip solvespace-windows-x64.zip solvespace.exe *.dll
+          7z a -tzip neosolve-windows-x64.zip solvespace.exe *.dll
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows
-          path: build/bin/RelWithDebInfo/solvespace-windows-x64.zip
+          path: build/bin/RelWithDebInfo/neosolve-windows-x64.zip
 
   build_release_macos:
     needs: [test_ubuntu, test_windows, test_macos]
@@ -110,16 +110,16 @@ jobs:
         upload_url=$(echo "$event" | jq -r ".release.upload_url")
         echo "upload_url=$upload_url" >> $GITHUB_OUTPUT
         echo "Upload URL: $upload_url"
-    - name: Upload solvespace.exe
+    - name: Upload neosolve-windows-x64.zip
       uses: actions/upload-release-asset@v1
       continue-on-error: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         upload_url: ${{ steps.get_upload_url.outputs.upload_url }}
-        asset_path: windows/solvespace.exe
-        asset_name: solvespace.exe
-        asset_content_type: binary/octet-stream
+        asset_path: windows/neosolve-windows-x64.zip
+        asset_name: neosolve-windows-x64.zip
+        asset_content_type: application/zip
     - name: Upload SolveSpace.dmg
       uses: actions/upload-release-asset@v1
       continue-on-error: true
@@ -128,5 +128,5 @@ jobs:
       with:
         upload_url: ${{ steps.get_upload_url.outputs.upload_url }}
         asset_path: macos/SolveSpace.dmg
-        asset_name: SolveSpace.dmg
+        asset_name: NeoSolve.dmg
         asset_content_type: binary/octet-stream

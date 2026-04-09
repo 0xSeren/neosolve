@@ -194,7 +194,7 @@ public:
 
     HKEY GetKey() {
         if(hKey == NULL) {
-            sscheck(ERROR_SUCCESS == RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\NeoSpace", 0, NULL, 0,
+            sscheck(ERROR_SUCCESS == RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\NeoSolve", 0, NULL, 0,
                                     KEY_ALL_ACCESS, NULL, &hKey, NULL));
         }
         return hKey;

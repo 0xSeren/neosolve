@@ -252,7 +252,7 @@ class SettingsImplQt final : public Settings {
 public:
     QSettings qset;
 
-    SettingsImplQt() : qset("NeoSpace", "neospace") {
+    SettingsImplQt() : qset("NeoSolve", "neosolve") {
     }
 
     void FreezeInt(const std::string& key, uint32_t value) override {
