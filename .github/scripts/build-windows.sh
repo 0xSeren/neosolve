@@ -35,32 +35,45 @@ cmake --build . --config "${BUILD_TYPE}" -- -maxcpucount
 
 # Skip visual tests on CI - rendering differs between environments
 
-# Copy OpenCASCADE DLLs to output directory for release builds
+# Copy only required OpenCASCADE DLLs to output directory for release builds
 if [ "$1" = "release" ]; then
     OCC_ROOT="${OpenCASCADE_DIR:-C:/occ/opencascade-7.9.3-vc14-64}"
     OCC_ROOT="${OCC_ROOT%/cmake}"  # Remove /cmake suffix if present
     OUTPUT_DIR="bin/${BUILD_TYPE}"
-
-    echo "Copying OpenCASCADE DLLs from $OCC_ROOT to $OUTPUT_DIR"
-
-    # Copy OCC DLLs
-    if [ -d "$OCC_ROOT/win64/vc14/bin" ]; then
-        cp "$OCC_ROOT/win64/vc14/bin/"*.dll "$OUTPUT_DIR/" 2>/dev/null || true
-    fi
-
-    # Copy 3rdparty DLLs (freetype, tbb, etc.)
+    OCC_BIN="$OCC_ROOT/win64/vc14/bin"
     THIRDPARTY_DIR="C:/occ/3rdparty-vc14-64"
-    if [ -d "$THIRDPARTY_DIR" ]; then
-        # FreeType
-        cp "$THIRDPARTY_DIR/freetype-2.5.5-vc14-64/bin/"*.dll "$OUTPUT_DIR/" 2>/dev/null || true
-        # TBB
-        cp "$THIRDPARTY_DIR/tbb_2021.5-vc14-64/bin/"*.dll "$OUTPUT_DIR/" 2>/dev/null || true
-        # Other potential dependencies
-        for dir in "$THIRDPARTY_DIR"/*/bin; do
-            [ -d "$dir" ] && cp "$dir/"*.dll "$OUTPUT_DIR/" 2>/dev/null || true
-        done
-    fi
 
-    echo "DLLs copied:"
-    ls -la "$OUTPUT_DIR/"*.dll 2>/dev/null | head -20 || echo "No DLLs found"
+    echo "Copying required OpenCASCADE DLLs to $OUTPUT_DIR"
+
+    # Only the OCC libraries we actually link against + their transitive deps
+    OCC_DLLS="
+        TKernel TKMath TKBRep TKTopAlgo TKPrim TKMesh
+        TKFillet TKOffset TKBO TKShHealing TKG3d TKG2d TKGeomBase
+        TKGeomAlgo TKHLR TKDESTEP TKDEIGES TKXSBase TKDE
+        TKCDF TKLCAF TKService TKXCAF TKBinXCAF TKXmlXCAF
+        TKBin TKBinL TKXml TKXmlL TKStd TKStdL TKTObj
+        TKRWMesh
+    "
+    for lib in $OCC_DLLS; do
+        if [ -f "$OCC_BIN/${lib}.dll" ]; then
+            cp "$OCC_BIN/${lib}.dll" "$OUTPUT_DIR/"
+        fi
+    done
+
+    # Required 3rdparty: TBB, FreeType, and OpenVR
+    for pattern in "tbb_*/bin/tbb12.dll" "tbb_*/bin/tbbmalloc.dll" "freetype-*/bin/freetype.dll" "openvr-*/bin/win64/openvr_api.dll"; do
+        for f in "$THIRDPARTY_DIR"/$pattern; do
+            [ -f "$f" ] && cp "$f" "$OUTPUT_DIR/" 2>/dev/null || true
+        done
+    done
+
+    # Remove debug DLLs that may have been pulled in by CMake
+    rm -f "$OUTPUT_DIR"/tbb12_debug.dll "$OUTPUT_DIR"/tbbmalloc_debug.dll \
+          "$OUTPUT_DIR"/tbbmalloc_proxy_debug.dll 2>/dev/null || true
+    # Remove Qt debug DLLs (Qt5*d.dll pattern)
+    rm -f "$OUTPUT_DIR"/Qt5*d.dll 2>/dev/null || true
+
+    echo "DLLs in output:"
+    ls "$OUTPUT_DIR/"*.dll 2>/dev/null | wc -l
+    du -sh "$OUTPUT_DIR/"
 fi

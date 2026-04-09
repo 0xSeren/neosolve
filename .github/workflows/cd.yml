@@ -52,6 +52,15 @@ jobs:
         shell: bash
         run: |
           cd build/bin/RelWithDebInfo
+          # Remove DLLs not used by solvespace
+          rm -f vtk*.dll VTK*.dll 2>/dev/null || true    # VTK
+          rm -f Qt5*.dll 2>/dev/null || true              # Qt (we use native Win32 GUI)
+          rm -f *_debug.dll 2>/dev/null || true           # Debug builds
+          rm -f TKDraw.dll TKQADraw.dll TK*Test*.dll TK*Draw*.dll \
+                TK*Inspector*.dll TK*Browser*.dll TK*View*.dll \
+                TKTreeModel.dll TKMessageModel.dll TKMessageView.dll \
+                TKShapeView.dll 2>/dev/null || true       # OCC dev/test tools
+          echo "Packaging $(ls *.dll | wc -l) DLLs"
           7z a -tzip neosolve-windows-x64.zip solvespace.exe *.dll
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -67,21 +76,10 @@ jobs:
     - name: Install Dependencies
       run: .github/scripts/install-macos.sh ci
     - name: Build
-      run: .github/scripts/build-macos.sh release arm64 && .github/scripts/build-macos.sh release x86_64
-    - name: Create Universal Binary & DMG
+      run: .github/scripts/build-macos.sh release arm64
+    - name: Create DMG
       run: |
-        mkdir -p universal/SolveSpace.app/Contents/MacOS
-        mkdir -p universal/SolveSpace.app/Contents/Resources
-        # Copy app structure from arm64 build
-        cp -R build-arm64/bin/SolveSpace.app/Contents/Info.plist universal/SolveSpace.app/Contents/
-        cp -R build-arm64/bin/SolveSpace.app/Contents/Resources/* universal/SolveSpace.app/Contents/Resources/ || true
-        # Create universal binary with lipo
-        lipo -create \
-          build-arm64/bin/SolveSpace.app/Contents/MacOS/SolveSpace \
-          build/bin/SolveSpace.app/Contents/MacOS/SolveSpace \
-          -output universal/SolveSpace.app/Contents/MacOS/SolveSpace
-        # Create DMG
-        hdiutil create -volname NeoSolve -srcfolder universal -ov -format UDZO NeoSolve.dmg
+        hdiutil create -volname NeoSolve -srcfolder build-arm64/bin/SolveSpace.app -ov -format UDZO NeoSolve.dmg
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:

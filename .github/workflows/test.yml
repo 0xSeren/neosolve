@@ -41,4 +41,4 @@ jobs:
     - name: Install Dependencies
       run: .github/scripts/install-macos.sh ci
     - name: Build & Test
-      run: .github/scripts/build-macos.sh debug arm64 && .github/scripts/build-macos.sh debug x86_64
+      run: .github/scripts/build-macos.sh debug arm64
