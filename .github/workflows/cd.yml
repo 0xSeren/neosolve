@@ -55,6 +55,34 @@ jobs:
     - name: Build & Test
       run: .github/scripts/build-macos.sh debug arm64 && .github/scripts/build-macos.sh debug x86_64
 
+  build_release_linux:
+    needs: [test_ubuntu, test_windows, test_macos]
+    name: Build Release Linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Dependencies
+        run: .github/scripts/install-ubuntu.sh
+      - name: Build
+        run: |
+          mkdir build && cd build
+          cmake \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_INSTALL_PREFIX=/usr \
+            -DENABLE_OPENMP=ON \
+            ..
+          make -j$(nproc)
+      - name: Package
+        run: |
+          cd build
+          make install DESTDIR=appdir
+          tar -czf neosolve-linux-x64.tar.gz -C appdir .
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: build/neosolve-linux-x64.tar.gz
+
   build_release_windows:
     needs: [test_ubuntu, test_windows, test_macos]
     name: Build Release Windows
@@ -96,7 +124,7 @@ jobs:
 
   upload_release_assets:
     name: Upload Release Assets
-    needs: [build_release_windows, build_release_macos]
+    needs: [build_release_linux, build_release_windows, build_release_macos]
     if: "!cancelled() && github.event_name == 'release'"
     runs-on: ubuntu-latest
     steps:
@@ -110,6 +138,16 @@ jobs:
         upload_url=$(echo "$event" | jq -r ".release.upload_url")
         echo "upload_url=$upload_url" >> $GITHUB_OUTPUT
         echo "Upload URL: $upload_url"
+    - name: Upload neosolve-linux-x64.tar.gz
+      uses: actions/upload-release-asset@v1
+      continue-on-error: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.get_upload_url.outputs.upload_url }}
+        asset_path: linux/neosolve-linux-x64.tar.gz
+        asset_name: neosolve-linux-x64.tar.gz
+        asset_content_type: application/gzip
     - name: Upload neosolve-windows-x64.zip
       uses: actions/upload-release-asset@v1
       continue-on-error: true
