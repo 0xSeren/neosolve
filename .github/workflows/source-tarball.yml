@@ -18,7 +18,7 @@ jobs:
       id: pack_tarball
       run: |
         version="${GITHUB_REF#refs/tags/v}"
-        dir_name="solvespace-${version}"
+        dir_name="neosolve-${version}"
         archive_name="${dir_name}.tar.xz"
         archive_path="${HOME}/${archive_name}"
         commit_sha="$GITHUB_SHA"
@@ -33,10 +33,10 @@ jobs:
         cd ..
         tar \
           --exclude-vcs \
-          --transform "s:^solvespace:${dir_name}:" \
+          --transform "s:^neosolve:${dir_name}:" \
           -cvaf \
           ${archive_path} \
-          solvespace
+          neosolve
     - name: Get Release Upload URL
       id: get_upload_url
       env:
