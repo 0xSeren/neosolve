@@ -169,10 +169,19 @@ if(USE_OPENCASCADE)
             ${OpenCASCADE_INCLUDE_DIR})
         target_link_directories(slvs_opencascade INTERFACE
             ${OpenCASCADE_LIBRARY_DIR})
+        # OCC 7.8+ reorganized library names (TKDESTEP/TKDEIGES)
+        # OCC 7.6 and earlier use TKSTEP/TKIGES/TKXDESTEP/TKXDEIGES
+        if(OpenCASCADE_VERSION VERSION_GREATER_EQUAL "7.8.0")
+            set(OCC_STEP_LIBS TKDESTEP)
+            set(OCC_IGES_LIBS TKDEIGES)
+        else()
+            set(OCC_STEP_LIBS TKSTEP TKSTEPBase TKSTEPAttr TKSTEP209 TKXDESTEP)
+            set(OCC_IGES_LIBS TKIGES TKXDEIGES)
+        endif()
         target_link_libraries(slvs_opencascade INTERFACE
             TKernel TKMath TKBRep TKTopAlgo TKPrim TKMesh
             TKFillet TKOffset TKBO TKShHealing TKG3d TKGeomBase
-            TKGeomAlgo TKHLR TKDESTEP TKDEIGES TKXSBase)
+            TKGeomAlgo TKHLR ${OCC_STEP_LIBS} ${OCC_IGES_LIBS} TKXSBase)
         target_compile_definitions(slvs_opencascade INTERFACE
             HAVE_OPENCASCADE=1)
         message(STATUS "Found OpenCASCADE: ${OpenCASCADE_INCLUDE_DIR}")
