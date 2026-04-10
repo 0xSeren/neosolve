@@ -43,21 +43,22 @@ if [ "$1" = "release" ]; then
     OCC_BIN="$OCC_ROOT/win64/vc14/bin"
     THIRDPARTY_DIR="C:/occ/3rdparty-vc14-64"
 
-    echo "Copying required OpenCASCADE DLLs to $OUTPUT_DIR"
+    echo "Copying OpenCASCADE DLLs to $OUTPUT_DIR"
 
-    # Only the OCC libraries we actually link against + their transitive deps
-    OCC_DLLS="
-        TKernel TKMath TKBRep TKTopAlgo TKPrim TKMesh
-        TKFillet TKOffset TKBO TKShHealing TKG3d TKG2d TKGeomBase
-        TKGeomAlgo TKHLR TKDESTEP TKDEIGES TKXSBase TKDE
-        TKCDF TKLCAF TKService TKXCAF TKBinXCAF TKXmlXCAF
-        TKBin TKBinL TKXml TKXmlL TKStd TKStdL TKTObj
-        TKRWMesh
-    "
-    for lib in $OCC_DLLS; do
-        if [ -f "$OCC_BIN/${lib}.dll" ]; then
-            cp "$OCC_BIN/${lib}.dll" "$OUTPUT_DIR/"
-        fi
+    # Copy all TK*.dll except test/dev/inspector tools
+    for f in "$OCC_BIN"/TK*.dll; do
+        name=$(basename "$f")
+        case "$name" in
+            TKDraw.dll|TKQADraw.dll|TK*Test*.dll|TK*Draw*.dll|\
+            TK*Inspector*.dll|TK*Browser*.dll|TKShapeView.dll|\
+            TKTreeModel.dll|TKMessageModel.dll|TKMessageView.dll|\
+            TKVInspector.dll|TKDFBrowser.dll|TKToolsDraw.dll|\
+            TKD3DHost*.dll|TKIVtk*.dll|TKDCAF.dll)
+                ;;
+            *)
+                cp "$f" "$OUTPUT_DIR/"
+                ;;
+        esac
     done
 
     # Required 3rdparty: TBB, FreeType, and OpenVR

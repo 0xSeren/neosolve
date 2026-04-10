@@ -92,7 +92,7 @@ sudo apt install git build-essential cmake zlib1g-dev libpng-dev \
     libcairo2-dev libfreetype6-dev libjson-c-dev \
     libfontconfig1-dev libpangomm-1.4-dev libgl-dev \
     libglu-dev libspnav-dev libgtkmm-3.0-dev qt6-base-dev \
-    libocct-modeling-algorithms-dev libocct-data-exchange-dev
+    libocct-modeling-algorithms-dev libocct-data-exchange-dev libtbb-dev
 ```
 
 On Fedora:
@@ -117,6 +117,30 @@ make -j$(nproc)
 
 # Optional: install system-wide
 sudo make install
+```
+
+### Arch Linux
+
+A PKGBUILD is provided in `pkg/arch/`:
+
+```sh
+cd pkg/arch
+makepkg -si
+```
+
+### NixOS / Nix
+
+A flake is provided at the repository root:
+
+```sh
+# Run directly
+nix run github:0xSeren/neosolve
+
+# Install into profile
+nix profile install github:0xSeren/neosolve
+
+# Development shell
+nix develop
 ```
 
 ## Building on macOS

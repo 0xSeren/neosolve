@@ -52,14 +52,10 @@ jobs:
         shell: bash
         run: |
           cd build/bin/RelWithDebInfo
-          # Remove DLLs not used by solvespace
-          rm -f vtk*.dll VTK*.dll 2>/dev/null || true    # VTK
-          rm -f Qt5*.dll 2>/dev/null || true              # Qt (we use native Win32 GUI)
-          rm -f *_debug.dll 2>/dev/null || true           # Debug builds
-          rm -f TKDraw.dll TKQADraw.dll TK*Test*.dll TK*Draw*.dll \
-                TK*Inspector*.dll TK*Browser*.dll TK*View*.dll \
-                TKTreeModel.dll TKMessageModel.dll TKMessageView.dll \
-                TKShapeView.dll 2>/dev/null || true       # OCC dev/test tools
+          # Remove DLLs not used by solvespace (Win32 GUI build, no VTK, no debug)
+          rm -f vtk*.dll VTK*.dll 2>/dev/null || true
+          rm -f Qt5*.dll 2>/dev/null || true
+          rm -f *_debug.dll 2>/dev/null || true
           echo "Packaging $(ls *.dll | wc -l) DLLs"
           7z a -tzip neosolve-windows-x64.zip solvespace.exe *.dll
       - name: Upload artifact
