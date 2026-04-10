@@ -1799,6 +1799,9 @@ bool Group::IsMeshGroup() {
         case Group::Type::MIRROR:
         case Group::Type::LOFT:
         case Group::Type::SWEEP:
+        case Group::Type::FILLET:
+        case Group::Type::CHAMFER:
+        case Group::Type::SHELL:
         case Group::Type::IMPORT_SOLID:
             return true;
 
