@@ -61,8 +61,18 @@ if [ "$1" = "release" ]; then
         esac
     done
 
-    # Required 3rdparty: TBB, FreeType, and OpenVR
-    for pattern in "tbb_*/bin/tbb12.dll" "tbb_*/bin/tbbmalloc.dll" "freetype-*/bin/freetype.dll" "openvr-*/bin/win64/openvr_api.dll"; do
+    # Required 3rdparty libs (transitive deps of OCC's TKService)
+    for pattern in \
+        "tbb-*/bin/tbb12.dll" \
+        "tbb-*/bin/tbbmalloc.dll" \
+        "jemalloc-*/bin/jemalloc.dll" \
+        "freetype-*/bin/freetype.dll" \
+        "freeimage-*/bin/FreeImage.dll" \
+        "ffmpeg-*/bin/avcodec-*.dll" \
+        "ffmpeg-*/bin/avformat-*.dll" \
+        "ffmpeg-*/bin/avutil-*.dll" \
+        "ffmpeg-*/bin/swscale-*.dll" \
+        "openvr-*/bin/win64/openvr_api.dll"; do
         for f in "$THIRDPARTY_DIR"/$pattern; do
             [ -f "$f" ] && cp "$f" "$OUTPUT_DIR/" 2>/dev/null || true
         done

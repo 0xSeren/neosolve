@@ -21,7 +21,7 @@ jobs:
         run: |
           mkdir build && cd build
           cmake \
-            -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+            -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_INSTALL_PREFIX=/usr \
             -DENABLE_OPENMP=ON \
             ..
@@ -30,6 +30,9 @@ jobs:
         run: |
           cd build
           make install DESTDIR=appdir
+          # Strip binaries and libraries to reduce size
+          find appdir -type f \( -name 'solvespace' -o -name 'solvespace-cli' -o -name '*.so*' \) \
+            -exec strip --strip-unneeded {} + 2>/dev/null || true
           tar -czf neosolve-linux-x64.tar.gz -C appdir .
       - name: Upload artifact
         uses: actions/upload-artifact@v4
