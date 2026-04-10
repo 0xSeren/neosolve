@@ -73,6 +73,14 @@ jobs:
       run: .github/scripts/install-macos.sh ci
     - name: Build
       run: .github/scripts/build-macos.sh release arm64
+    - name: Bundle dylibs
+      run: |
+        APP=build-arm64/bin/SolveSpace.app
+        mkdir -p "$APP/Contents/Frameworks"
+        dylibbundler -od -b -ns \
+          -x "$APP/Contents/MacOS/SolveSpace" \
+          -d "$APP/Contents/Frameworks/" \
+          -p "@executable_path/../Frameworks/"
     - name: Create DMG
       run: |
         hdiutil create -volname NeoSolve -srcfolder build-arm64/bin/SolveSpace.app -ov -format UDZO NeoSolve.dmg

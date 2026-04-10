@@ -19,6 +19,6 @@ else
     brew install libomp
 fi
 
-brew install opencascade
+brew install opencascade dylibbundler
 
 git submodule update --init extlib/cairo extlib/freetype extlib/libdxfrw extlib/libpng extlib/mimalloc extlib/pixman extlib/zlib extlib/eigen
