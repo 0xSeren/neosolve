@@ -84,6 +84,14 @@ jobs:
           -x "$APP/Contents/MacOS/SolveSpace" \
           -d "$APP/Contents/Frameworks/" \
           -p "@executable_path/../Frameworks/"
+        # dylibbundler rewrites install names, invalidating the linker's
+        # ad-hoc signatures. Apple Silicon refuses to load unsigned Mach-Os,
+        # so re-sign dylibs first (deepest first) then the main executables.
+        find "$APP/Contents/Frameworks" -name '*.dylib' -print0 \
+          | xargs -0 -n1 codesign --force --sign - --timestamp=none
+        codesign --force --sign - --timestamp=none "$APP/Contents/MacOS/solvespace-cli" || true
+        codesign --force --sign - --timestamp=none "$APP/Contents/MacOS/SolveSpace"
+        codesign --force --sign - --timestamp=none "$APP"
     - name: Create DMG
       run: |
         hdiutil create -volname NeoSolve -srcfolder build-arm64/bin/SolveSpace.app -ov -format UDZO NeoSolve.dmg
